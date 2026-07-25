@@ -1,0 +1,23 @@
+{
+  "visit": {
+    "client": "Legacy client",
+    "site": "100 Example Street",
+    "date": "2026-07-25"
+  },
+  "log": {},
+  "rooms": [
+    {
+      "id": 7,
+      "d": {
+        "name": "Legacy room",
+        "type": "Conference",
+        "lux_disp": "300"
+      }
+    }
+  ],
+  "photos": {},
+  "skipped": {},
+  "ui": {
+    "visit|main": true
+  }
+}

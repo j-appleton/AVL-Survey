@@ -170,13 +170,30 @@ button.btn:active{transform:translateY(1px)}
   opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center
 }
 .toast.on{opacity:.95}
+.sysnotices{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:78px;z-index:80;
+  width:calc(100% - 16px);max-width:804px;display:flex;flex-direction:column;gap:8px;
+  pointer-events:none
+}
+.sysnotice{
+  background:var(--ink);color:var(--bg);padding:11px 13px;border-radius:12px;
+  font-size:13px;line-height:1.35;display:flex;gap:8px;align-items:center;
+  box-shadow:0 6px 20px rgba(0,0,0,.25);pointer-events:auto
+}
+.sysnotice .msg{flex:1}
+.sysnotice button{
+  background:none;border:1px solid currentColor;color:inherit;border-radius:8px;
+  padding:5px 9px;font:inherit;font-size:12px;cursor:pointer;flex:none
+}
+.sysnotice button.pri{background:var(--bg);color:var(--ink)}
+.sysnotice button:disabled{opacity:.6;cursor:default}
 .skipbtn{font-size:11px;padding:4px 8px;border-radius:99px;border:1px solid var(--line);background:none;color:var(--muted);cursor:pointer;font:inherit;font-size:11px}
 
 /* print */
 #print{display:none}
 @media print{
   body{background:#fff;color:#000;padding:0;font-size:11pt}
-  header,.foot,#app,.toast{display:none !important}
+  header,.foot,#app,.toast,.sysnotices{display:none !important}
   #print{display:block;padding:0 10mm}
   #print h1{font-size:17pt;margin:0 0 2mm}
   #print h2{font-size:13pt;margin:6mm 0 2mm;border-bottom:1.5px solid #000;padding-bottom:1mm;page-break-after:avoid}
@@ -214,6 +231,7 @@ button.btn:active{transform:translateY(1px)}
 </div></div>
 
 <div class="toast" id="toast"></div>
+<div class="sysnotices" id="systemNotices" aria-live="polite"></div>
 <div id="print"></div>
 <input type="file" id="filein" accept="image/*" capture="environment" multiple hidden>
 <input type="file" id="jsonin" accept="application/json,.json" hidden>
@@ -230,11 +248,18 @@ var store = {
   get: function(k){ try { return localStorage.getItem(k); } catch(e){ return mem[k] || null; } },
   set: function(k,v){ try { localStorage.setItem(k,v); return true; } catch(e){ mem[k]=v; return false; } }
 };
-var KEY = "avl_survey_v1";
+var KEY         = "avl_survey_v1";  // live survey
+var BACKUP_KEY  = "avl_backup_v1";  // pre-destructive-op snapshot
+var SALVAGE_KEY = "avl_salvage_v1"; // unreadable payload, kept rather than discarded
 var STORAGE_OK = (function(){
   try { localStorage.setItem("__t","1"); localStorage.removeItem("__t"); return true; }
   catch(e){ return false; }
 })();
+
+/* App + data versions. SCHEMA is the shape of the persisted survey and is the
+   only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
+var APP_VERSION = "1.2.0";
+var SCHEMA = 2;
 
 /* ============================================================
    SCHEMA
@@ -392,26 +417,232 @@ function minDiag(farFt, analytical){
 /* ============================================================
    STATE
    ============================================================ */
-var S = { visit:{}, log:{}, rooms:[], photos:{}, skipped:{}, ui:{} };
+function nowISO(){ try { return new Date().toISOString(); } catch(e){ return ""; } }
+function blankState(){
+  return {
+    visit:{}, log:{}, rooms:[], photos:{}, skipped:{}, ui:{},
+    meta:{created:nowISO(), updated:nowISO(), app:APP_VERSION}
+  };
+}
+var S = blankState();
 var seq = 1;
+
+/* Key = the schema version being migrated FROM. Never delete an entry:
+   older exports still need to walk the complete chain. */
+var MIGRATIONS = {
+  1: function(d){
+    d.meta = {created:nowISO(), updated:nowISO(), app:APP_VERSION, migratedFrom:1};
+    return d;
+  }
+};
+
+/* Recognise either a versioned envelope or a legacy bare-state payload. */
+function normalize(p){
+  if(!p || typeof p !== "object") return null;
+  if(p.app === "avl-survey" && typeof p.schema === "number" && p.data && typeof p.data === "object"){
+    return {schema:p.schema, data:p.data};
+  }
+  if(Object.prototype.hasOwnProperty.call(p,"visit") || Object.prototype.hasOwnProperty.call(p,"rooms")){
+    return {schema:1, data:p};
+  }
+  return null;
+}
+
+/* Reject damaged payloads before they can replace good survey data. */
+function validate(d){
+  if(!d || typeof d !== "object") return {ok:false, reason:"not an object"};
+  if(!Array.isArray(d.rooms)) return {ok:false, reason:"rooms is not a list"};
+
+  var bad = null;
+  d.rooms.forEach(function(r,i){
+    if(bad) return;
+    if(!r || typeof r !== "object") bad = "room " + i + " is not an object";
+    else if(typeof r.id === "undefined") bad = "room " + i + " has no id";
+    else if(!r.d || typeof r.d !== "object") bad = "room " + i + " has no field data";
+  });
+  if(bad) return {ok:false, reason:bad};
+
+  var objs = ["visit","log","photos","skipped","ui"];
+  for(var i=0;i<objs.length;i++){
+    var v = d[objs[i]];
+    if(typeof v !== "undefined" && (v === null || typeof v !== "object" || Array.isArray(v))){
+      return {ok:false, reason:objs[i] + " is malformed"};
+    }
+  }
+  return {ok:true};
+}
+
+/* Fill optional objects so a partial-but-valid payload cannot crash rendering. */
+function coerce(d){
+  var b = blankState();
+  return {
+    visit:d.visit || b.visit,
+    log:d.log || b.log,
+    rooms:d.rooms || b.rooms,
+    photos:d.photos || b.photos,
+    skipped:d.skipped || b.skipped,
+    ui:d.ui || b.ui,
+    meta:d.meta || b.meta
+  };
+}
+
+/* payload -> {ok, data, from} | {ok:false, reason} */
+function migrate(payload){
+  var n = normalize(payload);
+  if(!n) return {ok:false, reason:"unrecognised file — not an AVL survey export"};
+  if(n.schema > SCHEMA){
+    return {ok:false, reason:"created by a newer version of the app (v" + n.schema + "). Update the app first."};
+  }
+
+  var d = n.data;
+  var v = n.schema;
+  while(v < SCHEMA){
+    var fn = MIGRATIONS[v];
+    if(!fn) return {ok:false, reason:"no migration path from schema v" + v};
+    try { d = fn(d); }
+    catch(e){ return {ok:false, reason:"migration v" + v + " failed"}; }
+    v++;
+  }
+
+  var val = validate(d);
+  if(!val.ok) return {ok:false, reason:val.reason};
+  return {ok:true, data:coerce(d), from:n.schema};
+}
+
+function reseq(){
+  seq = 1;
+  S.rooms.forEach(function(r){
+    var n = parseInt(r.id,10);
+    if(!isNaN(n) && n >= seq) seq = n + 1;
+  });
+}
 
 function load(){
   var raw = store.get(KEY);
   if(!raw) return;
-  try {
-    var d = JSON.parse(raw);
-    S = { visit:d.visit||{}, log:d.log||{}, rooms:d.rooms||[], photos:d.photos||{}, skipped:d.skipped||{}, ui:d.ui||{} };
-    S.rooms.forEach(function(r){ if(r.id >= seq) seq = r.id + 1; });
-  } catch(e){ /* corrupt payload — start clean rather than explode */ }
+  var parsed;
+  try { parsed = JSON.parse(raw); }
+  catch(e){
+    store.set(SALVAGE_KEY, raw);
+    toast("Saved data was unreadable — a copy was kept");
+    return;
+  }
+
+  var res = migrate(parsed);
+  if(!res.ok){
+    store.set(SALVAGE_KEY, raw);
+    toast("Saved data not loaded: " + res.reason);
+    return;
+  }
+
+  S = res.data;
+  reseq();
+  if(res.from < SCHEMA) save();
 }
+
+function envelope(){
+  return {
+    app:"avl-survey",
+    schema:SCHEMA,
+    appVersion:APP_VERSION,
+    exportedAt:nowISO(),
+    data:S
+  };
+}
+
 var saveTimer = null;
 function save(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function(){
-    var ok = store.set(KEY, JSON.stringify(S));
-    if(!ok) toast("Storage full — export your data");
+    if(S.meta) S.meta.updated = nowISO();
+    var ok = store.set(KEY, JSON.stringify(envelope()));
+    if(!ok) toast("Storage full — export your data now");
+    updateStorageBar();
   }, 250);
 }
+
+/* Photos remain base64 in localStorage for now. Measure that binding ~5 MB
+   ceiling directly; navigator.storage.estimate() reports a different quota. */
+var LS_CAP = 5 * 1024 * 1024;
+var deviceInfo = {used:0, quota:0, known:false};
+
+function fmtMB(bytes){
+  if(bytes >= 1048576) return (bytes/1048576).toFixed(1) + " MB";
+  return Math.round(bytes/1024) + " KB";
+}
+function localBytes(){
+  try {
+    var total = 0;
+    for(var i=0;i<localStorage.length;i++){
+      var k = localStorage.key(i);
+      total += (k.length + (localStorage.getItem(k) || "").length) * 2;
+    }
+    return total;
+  } catch(e){
+    return JSON.stringify(S).length * 2;
+  }
+}
+function photoCount(){
+  var n = 0;
+  Object.keys(S.photos || {}).forEach(function(k){
+    n += (S.photos[k] || []).length;
+  });
+  return n;
+}
+function hasSurveyWork(){
+  if(S.rooms.length || photoCount()) return true;
+  var scopes = [S.visit || {}, S.log || {}];
+  for(var i=0;i<scopes.length;i++){
+    var keys = Object.keys(scopes[i]);
+    for(var j=0;j<keys.length;j++){
+      if(answered(scopes[i][keys[j]])) return true;
+    }
+  }
+  return Object.keys(S.skipped || {}).some(function(k){ return !!S.skipped[k]; });
+}
+function storageHTML(){
+  if(!STORAGE_OK){
+    return '<div class="flag bad" style="margin:0">Storage unavailable in this viewer. Nothing is being saved.</div>';
+  }
+
+  var used = localBytes();
+  var pct = Math.min(100, Math.round(used / LS_CAP * 100));
+  var color = pct >= 85 ? "var(--danger)" : (pct >= 60 ? "var(--warn)" : "var(--ok)");
+  var count = photoCount();
+  var h = '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:5px">' +
+    '<span>' + fmtMB(used) + ' of about ' + fmtMB(LS_CAP) + '</span>' +
+    '<span>' + count + ' photo' + (count === 1 ? '' : 's') + '</span></div>';
+  h += '<div style="height:7px;background:var(--line);border-radius:99px;overflow:hidden">' +
+    '<i style="display:block;height:100%;width:' + Math.max(pct,1) + '%;background:' + color + '"></i></div>';
+
+  if(pct >= 85){
+    h += '<div class="flag bad" style="margin-top:8px">Nearly full. Export now — new photos may fail to save.</div>';
+  } else if(pct >= 60){
+    h += '<div class="flag" style="margin-top:8px">Over ' + pct + '% of the survey storage limit. Export and start a fresh survey soon.</div>';
+  }
+  if(deviceInfo.known){
+    h += '<div class="hint" style="margin-top:6px">Device storage used by this app, including the offline copy: ' +
+      fmtMB(deviceInfo.used) + '</div>';
+  }
+  return h;
+}
+function updateStorageBar(){
+  var el = document.getElementById("storagewrap");
+  if(el) el.innerHTML = storageHTML();
+}
+function refreshStorageEstimate(){
+  if(!navigator.storage || !navigator.storage.estimate) return;
+  navigator.storage.estimate().then(function(e){
+    deviceInfo = {used:e.usage || 0, quota:e.quota || 0, known:true};
+    updateStorageBar();
+  }).catch(function(){});
+}
+
+function snapshot(){
+  try { return store.set(BACKUP_KEY, JSON.stringify(envelope())); }
+  catch(e){ return false; }
+}
+function hasBackup(){ return !!store.get(BACKUP_KEY); }
 
 function toast(m){
   var t = document.getElementById("toast");
@@ -774,14 +1005,20 @@ function render(){
   });
 
   /* utility */
-  h += '<div class="card"><div class="roomtools" style="border:0;background:none;flex-wrap:wrap">' +
-    '<button class="btn sm ghost" id="imp">Import data</button>' +
+  h += '<div class="card"><div style="padding:14px">';
+  h += '<div class="flab" style="margin-bottom:8px">Data &amp; storage</div>';
+  h += '<div id="storagewrap" style="margin-bottom:12px">' + storageHTML() + '</div>';
+  h += '<div class="roomtools" style="border:0;background:none;padding:0;flex-wrap:wrap">' +
+    '<button class="btn sm ghost" id="imp">Import</button>' +
     '<button class="btn sm ghost" id="raw">Show raw data</button>' +
-    '<button class="btn sm ghost" id="wipe">Clear survey</button></div></div>';
-  h += '<div style="text-align:center;color:var(--muted);font-size:11px;padding:0 0 8px">' +
+    (hasBackup() ? '<button class="btn sm ghost" id="restore">Restore backup</button>' : '') +
+    '<button class="btn sm ghost" id="wipe">Clear survey</button></div>';
+  h += '</div></div>';
+  h += '<div style="text-align:center;color:var(--muted);font-size:11px;padding:0 0 10px;line-height:1.5">' +
        (STORAGE_OK
          ? 'Saves automatically on this device. Export before switching phones.'
-         : '&#9888; Autosave unavailable in this viewer &mdash; your work is held in memory only. Open the file directly in a browser, or use &ldquo;Show raw data&rdquo; before closing.') +
+         : '&#9888; Autosave unavailable in this viewer &mdash; work is held in memory only. Use &ldquo;Show raw data&rdquo; before closing.') +
+       '<br><span style="opacity:.7">v' + APP_VERSION + ' &middot; data schema v' + SCHEMA + '</span>' +
        '</div>';
 
   document.getElementById("app").innerHTML = h;
@@ -922,11 +1159,17 @@ document.addEventListener("click", function(e){
   if(t.id === "save"){ exportJSON(); return; }
   if(t.id === "pdf"){ buildPrint(); return; }
   if(t.id === "imp"){ document.getElementById("jsonin").click(); return; }
-  if(t.id === "raw"){ showRaw(JSON.stringify(S,null,2), "Survey data (copy & paste to save)"); return; }
+  if(t.id === "raw"){ showRaw(JSON.stringify(envelope(),null,2), "Survey data (copy & paste to save)"); return; }
+  if(t.id === "restore"){
+    armConfirm(t, "Tap again to restore", function(){ restoreBackup(); });
+    return;
+  }
   if(t.id === "wipe"){
     armConfirm(t, "Tap again to clear everything", function(){
-      S = { visit:{}, log:{}, rooms:[], photos:{}, skipped:{}, ui:{} };
+      snapshot();
+      S = blankState();
       seq = 1; save(); render();
+      toast("Cleared — recoverable via Restore backup");
     });
     return;
   }
@@ -987,7 +1230,7 @@ function slug(){
   return "avl-survey-" + c + (d ? "-" + d : "");
 }
 function exportJSON(){
-  var json = JSON.stringify(S,null,2);
+  var json = JSON.stringify(envelope(),null,2);
   try {
     var blob = new Blob([json], {type:"application/json"});
     var a = document.createElement("a");
@@ -1003,17 +1246,50 @@ function exportJSON(){
     showRaw(json, "Download blocked — copy this instead");
   }
 }
+
+/* Import is the most dangerous operation in the app: it overwrites everything.
+   Parse, migrate, validate, snapshot, then apply. */
+function applyImport(text){
+  var parsed;
+  try { parsed = JSON.parse(text); }
+  catch(e){ toast("That file isn't valid JSON"); return false; }
+
+  var res = migrate(parsed);
+  if(!res.ok){ toast("Not imported: " + res.reason); return false; }
+
+  var incoming = res.data;
+  var rooms = incoming.rooms.length;
+  var hadWork = hasSurveyWork();
+  if(hadWork && !snapshot()){
+    toast("Could not back up current survey — import cancelled");
+    return false;
+  }
+
+  S = incoming;
+  reseq();
+  save();
+  render();
+  toast("Imported " + rooms + (rooms === 1 ? " room" : " rooms") +
+    (res.from < SCHEMA ? " (upgraded from v" + res.from + ")" : "") +
+    (hadWork ? " — previous survey backed up" : ""));
+  return true;
+}
+
+function restoreBackup(){
+  var raw = store.get(BACKUP_KEY);
+  if(!raw){ toast("No backup available"); return false; }
+  var current = JSON.stringify(envelope());
+  if(!applyImport(raw)) return false;
+  store.set(BACKUP_KEY, current);
+  render();
+  return true;
+}
+
 document.getElementById("jsonin").addEventListener("change", function(e){
   var f = e.target.files[0]; if(!f) return;
   var r = new FileReader();
-  r.onload = function(){
-    try {
-      var d = JSON.parse(r.result);
-      S = { visit:d.visit||{}, log:d.log||{}, rooms:d.rooms||[], photos:d.photos||{}, skipped:d.skipped||{}, ui:d.ui||{} };
-      seq = 1; S.rooms.forEach(function(x){ if(x.id >= seq) seq = x.id + 1; });
-      save(); render(); toast("Survey imported");
-    } catch(err){ toast("That file didn't parse"); }
-  };
+  r.onload = function(){ applyImport(r.result); };
+  r.onerror = function(){ toast("Could not read that file"); };
   r.readAsText(f);
   e.target.value = "";
 });
@@ -1102,11 +1378,118 @@ function buildPrint(){
 load();
 if(S.ui["visit|main"] === undefined) S.ui["visit|main"] = true;
 render();
+refreshStorageEstimate();
+
+/* Ask the browser to reduce eviction risk for this offline field tool. */
+if(navigator.storage && navigator.storage.persist){
+  navigator.storage.persisted().then(function(persisted){
+    if(!persisted) return navigator.storage.persist();
+  }).catch(function(){});
+}
 
 /* ---- offline service worker ---- */
+var swApplyingUpdate = false;
+var swUpdateDismissed = false;
+var swUpdateCheckRunning = false;
+var swUpdateCheckQueued = false;
+
+function showUpdateNotice(reg){
+  if(!reg || !reg.waiting || swUpdateDismissed) return;
+  if(document.getElementById("swUpdateNotice")) return;
+
+  var host = document.getElementById("systemNotices");
+  if(!host) return;
+
+  var bar = document.createElement("div");
+  bar.className = "sysnotice";
+  bar.id = "swUpdateNotice";
+  bar.setAttribute("role","status");
+
+  var msg = document.createElement("span");
+  msg.className = "msg";
+  msg.innerHTML = "<b>Update ready.</b> Apply it now or keep working and update later.";
+
+  var later = document.createElement("button");
+  later.type = "button";
+  later.id = "swUpdateLater";
+  later.textContent = "Later";
+  later.onclick = function(){
+    swUpdateDismissed = true;
+    if(bar.parentNode) bar.parentNode.removeChild(bar);
+  };
+
+  var apply = document.createElement("button");
+  apply.type = "button";
+  apply.className = "pri";
+  apply.id = "swUpdateNow";
+  apply.textContent = "Update";
+  apply.onclick = function(){
+    if(!reg.waiting) return;
+    swApplyingUpdate = true;
+    apply.disabled = true;
+    later.disabled = true;
+    apply.textContent = "Updating...";
+    reg.waiting.postMessage({type:"SKIP_WAITING"});
+  };
+
+  bar.appendChild(msg);
+  bar.appendChild(later);
+  bar.appendChild(apply);
+  host.appendChild(bar);
+}
+
+function watchForUpdate(reg){
+  if(reg.waiting) showUpdateNotice(reg);
+  reg.addEventListener("updatefound", function(){
+    var worker = reg.installing;
+    if(!worker) return;
+    worker.addEventListener("statechange", function(){
+      if(worker.state === "installed" && navigator.serviceWorker.controller){
+        showUpdateNotice(reg);
+      }
+    });
+  });
+}
+
+function checkForUpdate(reg){
+  if(swUpdateCheckRunning){
+    swUpdateCheckQueued = true;
+    return Promise.resolve();
+  }
+
+  swUpdateCheckRunning = true;
+  return reg.update()
+    .catch(function(){ /* update check unavailable — cached app still works */ })
+    .then(function(){
+      swUpdateCheckRunning = false;
+      if(swUpdateCheckQueued){
+        swUpdateCheckQueued = false;
+        return checkForUpdate(reg);
+      }
+    });
+}
+
 if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
+  navigator.serviceWorker.addEventListener("controllerchange", function(){
+    if(!swApplyingUpdate) return;
+    swApplyingUpdate = false;
+    window.location.reload();
+  });
+
   window.addEventListener("load", function(){
-    navigator.serviceWorker.register("./sw.js").catch(function(){ /* offline caching unavailable — app still runs */ });
+    navigator.serviceWorker.register("./sw.js", {updateViaCache:"none"}).then(function(reg){
+      watchForUpdate(reg);
+      window.addEventListener("focus", function(){ checkForUpdate(reg); });
+      document.addEventListener("visibilitychange", function(){
+        if(document.visibilityState === "visible"){
+          checkForUpdate(reg);
+          refreshStorageEstimate();
+        }
+      });
+      checkForUpdate(reg).then(function(){
+        if(window.__avl) window.__avl.swReady = true;
+      });
+    }).catch(function(){ /* offline caching unavailable — app still runs */ });
   });
 }
 
@@ -1119,23 +1502,52 @@ if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
   var bar = document.createElement("div");
-  bar.style.cssText = "position:fixed;left:8px;right:8px;bottom:70px;z-index:70;background:var(--ink);color:var(--bg);" +
-    "padding:11px 13px;border-radius:12px;font-size:13px;line-height:1.35;display:flex;gap:10px;align-items:flex-start;box-shadow:0 6px 20px rgba(0,0,0,.25)";
-  bar.innerHTML = '<span style="flex:1">' +
+  bar.className = "sysnotice";
+  bar.innerHTML = '<span class="msg">' +
     (isIOS
       ? 'Install for offline use: tap <b>Share</b>, then <b>Add to Home Screen</b>.'
       : 'Install for offline use: open the browser menu and choose <b>Add to Home screen</b>.') +
     '</span>';
   var x = document.createElement("button");
   x.textContent = "Got it";
-  x.style.cssText = "background:none;border:1px solid currentColor;color:inherit;border-radius:8px;padding:5px 9px;font:inherit;font-size:12px;cursor:pointer;flex:none";
-  x.onclick = function(){ store.set("avl_hint_dismissed","1"); bar.parentNode && bar.parentNode.removeChild(bar); };
+  x.onclick = function(){
+    store.set("avl_hint_dismissed","1");
+    if(bar.parentNode) bar.parentNode.removeChild(bar);
+  };
   bar.appendChild(x);
-  setTimeout(function(){ document.body.appendChild(bar); }, 900);
+  setTimeout(function(){
+    var host = document.getElementById("systemNotices");
+    if(host) host.appendChild(bar);
+  }, 900);
 })();
 
 /* expose a few helpers for testing */
-window.__avl = { recNits:recNits, recLumens:recLumens, minDiag:minDiag, maxViewFt:maxViewFt, targetFL:targetFL, S:function(){ return S; } };
+window.__avl = {
+  recNits:recNits,
+  recLumens:recLumens,
+  minDiag:minDiag,
+  maxViewFt:maxViewFt,
+  targetFL:targetFL,
+  S:function(){ return S; },
+  SCHEMA:SCHEMA,
+  APP_VERSION:APP_VERSION,
+  migrate:migrate,
+  validate:validate,
+  normalize:normalize,
+  envelope:envelope,
+  applyImport:applyImport,
+  restoreBackup:restoreBackup,
+  hasBackup:hasBackup,
+  hasSurveyWork:hasSurveyWork,
+  storageHTML:storageHTML,
+  localBytes:localBytes,
+  raw:function(){ return store.get(KEY); },
+  backupRaw:function(){ return store.get(BACKUP_KEY); },
+  salvageRaw:function(){ return store.get(SALVAGE_KEY); },
+  setRaw:function(value){ return store.set(KEY,value); },
+  reload:function(){ S = blankState(); load(); render(); },
+  swReady:false
+};
 </script>
 </body>
 </html>

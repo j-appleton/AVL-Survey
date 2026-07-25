@@ -20,7 +20,7 @@ GitHub Pages is free and takes about five minutes.
    - Set it to **Public** (Pages requires this on free accounts)
    - Tick **Add a README file**, then **Create repository**
 2. In the new repo click **Add file** → **Upload files**.
-3. Upload **all six files** from this bundle:
+3. Upload **all seven files** from this bundle:
    - `index.html`
    - `sw.js`
    - `manifest.webmanifest`
@@ -60,8 +60,11 @@ it works with no signal — the service worker caches everything on first load.
 - The **core** counter in the header tracks the small subset worth chasing before
   you leave site. Everything else is optional.
 - **+ Room** adds a space; **Duplicate** clones one for near-identical rooms.
-- **Export data** downloads a JSON backup. **Import data** restores it on another
-  device. **Show raw data** is the fallback if a download is ever blocked.
+- **Export data** downloads a versioned JSON backup. **Import** validates and
+  upgrades older exports before applying them. **Show raw data** is the fallback
+  if a download is ever blocked.
+- Importing over work and clearing a survey create a recoverable snapshot.
+  **Restore backup** appears whenever one is available.
 - **PDF** builds a print report — use *Share → Print → pinch out → Save as PDF*.
 
 ### Ambient light
@@ -84,15 +87,56 @@ The app then computes:
 
 ## Updating it later
 
-Edit `index.html` in GitHub, then bump the cache version in `sw.js`:
+Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
 var CACHE = "avl-survey-v2";   // was v1
 ```
 
-Without that bump, installed phones keep serving the old cached copy.
+The page checks `sw.js` without using the browser's HTTP cache. When a changed
+worker finishes installing, the open app keeps using its current version and
+shows an **Update / Later** notice. **Update** activates the waiting worker and
+reloads the page; **Later** leaves the current survey session alone.
+
+The original v1 app did not contain the update-notice code. The first upgrade
+from v1 to v2 may therefore require fully closing and reopening the installed
+app once. Updates after v2 use the in-app notice.
+
+The PWA still has no build step. `package.json`, `tests/`, and `.github/` support
+automated testing only and are not required when uploading the seven runtime
+files from an iPhone.
+
+## Tests
+
+The browser suites start the app on localhost and verify:
+
+- legacy data migrates to schema v2 and saves in a versioned envelope
+- damaged, foreign, and newer-schema imports cannot replace valid work
+- import and clear snapshots can be restored, and restore is itself undoable
+- unreadable stored data is salvaged rather than silently discarded
+- storage warnings measure the localStorage limit that photos actually consume
+- the ambient-light and DISCAS calculations retain their domain thresholds
+- the installed app reloads offline with survey data intact
+- a new service worker waits for **Update**, **Later** preserves the open session,
+  and old caches are removed only after explicit activation
+
+Run it with:
+
+```sh
+npm ci
+npx playwright install chromium
+npm test
+```
+
+GitHub Actions runs the same test for pull requests and pushes to `main`.
 
 ## Data safety
 
 Everything lives in your phone's browser storage. Clearing Safari website data,
 or deleting the home screen app, wipes it. **Export after every site visit.**
+
+The app stores schema-versioned data and keeps a pre-destructive backup before
+import or clear. Unreadable stored data is retained separately for recovery. The
+Data & storage card measures usage against the approximately 5 MB localStorage
+ceiling, warns at 60%, and escalates at 85%. This makes the current photo limit
+visible; moving photos to IndexedDB is still the next storage task.
