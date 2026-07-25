@@ -1,6 +1,6 @@
 /* AVL Site Survey — offline service worker.
    Bump CACHE when you change any app file; old caches are purged on activate. */
-var CACHE = "avl-survey-v1";
+var CACHE = "avl-survey-v2";
 
 var ASSETS = [
   "./",
@@ -16,9 +16,14 @@ self.addEventListener("install", function(e){
   e.waitUntil(
     caches.open(CACHE)
       .then(function(c){ return c.addAll(ASSETS); })
-      .then(function(){ return self.skipWaiting(); })
       .catch(function(){ /* a missing optional asset must not block install */ })
   );
+});
+
+/* A new worker waits until the open app explicitly asks it to activate.
+   This prevents a deploy from replacing the runtime during an active survey. */
+self.addEventListener("message", function(e){
+  if(e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", function(e){

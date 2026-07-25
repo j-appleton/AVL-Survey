@@ -20,7 +20,7 @@ GitHub Pages is free and takes about five minutes.
    - Set it to **Public** (Pages requires this on free accounts)
    - Tick **Add a README file**, then **Create repository**
 2. In the new repo click **Add file** → **Upload files**.
-3. Upload **all six files** from this bundle:
+3. Upload **all seven files** from this bundle:
    - `index.html`
    - `sw.js`
    - `manifest.webmanifest`
@@ -84,13 +84,45 @@ The app then computes:
 
 ## Updating it later
 
-Edit `index.html` in GitHub, then bump the cache version in `sw.js`:
+Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
 var CACHE = "avl-survey-v2";   // was v1
 ```
 
-Without that bump, installed phones keep serving the old cached copy.
+The page checks `sw.js` without using the browser's HTTP cache. When a changed
+worker finishes installing, the open app keeps using its current version and
+shows an **Update / Later** notice. **Update** activates the waiting worker and
+reloads the page; **Later** leaves the current survey session alone.
+
+The original v1 app did not contain the update-notice code. The first upgrade
+from v1 to v2 may therefore require fully closing and reopening the installed
+app once. Updates after v2 use the in-app notice.
+
+The PWA still has no build step. `package.json`, `tests/`, and `.github/` support
+automated testing only and are not required when uploading the seven runtime
+files from an iPhone.
+
+## Tests
+
+The browser regression test starts the app on localhost, installs the service
+worker, saves a sample survey, changes the worker cache version, and verifies:
+
+- the new worker waits rather than taking control
+- **Later** preserves the open session
+- **Update** activates the worker and reloads
+- saved visit and room data survive
+- the old cache is removed only after activation
+
+Run it with:
+
+```sh
+npm ci
+npx playwright install chromium
+npm test
+```
+
+GitHub Actions runs the same test for pull requests and pushes to `main`.
 
 ## Data safety
 

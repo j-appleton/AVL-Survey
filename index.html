@@ -170,13 +170,30 @@ button.btn:active{transform:translateY(1px)}
   opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center
 }
 .toast.on{opacity:.95}
+.sysnotices{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:78px;z-index:80;
+  width:calc(100% - 16px);max-width:804px;display:flex;flex-direction:column;gap:8px;
+  pointer-events:none
+}
+.sysnotice{
+  background:var(--ink);color:var(--bg);padding:11px 13px;border-radius:12px;
+  font-size:13px;line-height:1.35;display:flex;gap:8px;align-items:center;
+  box-shadow:0 6px 20px rgba(0,0,0,.25);pointer-events:auto
+}
+.sysnotice .msg{flex:1}
+.sysnotice button{
+  background:none;border:1px solid currentColor;color:inherit;border-radius:8px;
+  padding:5px 9px;font:inherit;font-size:12px;cursor:pointer;flex:none
+}
+.sysnotice button.pri{background:var(--bg);color:var(--ink)}
+.sysnotice button:disabled{opacity:.6;cursor:default}
 .skipbtn{font-size:11px;padding:4px 8px;border-radius:99px;border:1px solid var(--line);background:none;color:var(--muted);cursor:pointer;font:inherit;font-size:11px}
 
 /* print */
 #print{display:none}
 @media print{
   body{background:#fff;color:#000;padding:0;font-size:11pt}
-  header,.foot,#app,.toast{display:none !important}
+  header,.foot,#app,.toast,.sysnotices{display:none !important}
   #print{display:block;padding:0 10mm}
   #print h1{font-size:17pt;margin:0 0 2mm}
   #print h2{font-size:13pt;margin:6mm 0 2mm;border-bottom:1.5px solid #000;padding-bottom:1mm;page-break-after:avoid}
@@ -214,6 +231,7 @@ button.btn:active{transform:translateY(1px)}
 </div></div>
 
 <div class="toast" id="toast"></div>
+<div class="sysnotices" id="systemNotices" aria-live="polite"></div>
 <div id="print"></div>
 <input type="file" id="filein" accept="image/*" capture="environment" multiple hidden>
 <input type="file" id="jsonin" accept="application/json,.json" hidden>
@@ -1104,9 +1122,87 @@ if(S.ui["visit|main"] === undefined) S.ui["visit|main"] = true;
 render();
 
 /* ---- offline service worker ---- */
+var swApplyingUpdate = false;
+var swUpdateDismissed = false;
+
+function showUpdateNotice(reg){
+  if(!reg || !reg.waiting || swUpdateDismissed) return;
+  if(document.getElementById("swUpdateNotice")) return;
+
+  var host = document.getElementById("systemNotices");
+  if(!host) return;
+
+  var bar = document.createElement("div");
+  bar.className = "sysnotice";
+  bar.id = "swUpdateNotice";
+  bar.setAttribute("role","status");
+
+  var msg = document.createElement("span");
+  msg.className = "msg";
+  msg.innerHTML = "<b>Update ready.</b> Apply it now or keep working and update later.";
+
+  var later = document.createElement("button");
+  later.type = "button";
+  later.id = "swUpdateLater";
+  later.textContent = "Later";
+  later.onclick = function(){
+    swUpdateDismissed = true;
+    if(bar.parentNode) bar.parentNode.removeChild(bar);
+  };
+
+  var apply = document.createElement("button");
+  apply.type = "button";
+  apply.className = "pri";
+  apply.id = "swUpdateNow";
+  apply.textContent = "Update";
+  apply.onclick = function(){
+    if(!reg.waiting) return;
+    swApplyingUpdate = true;
+    apply.disabled = true;
+    later.disabled = true;
+    apply.textContent = "Updating...";
+    reg.waiting.postMessage({type:"SKIP_WAITING"});
+  };
+
+  bar.appendChild(msg);
+  bar.appendChild(later);
+  bar.appendChild(apply);
+  host.appendChild(bar);
+}
+
+function watchForUpdate(reg){
+  if(reg.waiting) showUpdateNotice(reg);
+  reg.addEventListener("updatefound", function(){
+    var worker = reg.installing;
+    if(!worker) return;
+    worker.addEventListener("statechange", function(){
+      if(worker.state === "installed" && navigator.serviceWorker.controller){
+        showUpdateNotice(reg);
+      }
+    });
+  });
+}
+
+function checkForUpdate(reg){
+  reg.update().catch(function(){ /* update check unavailable — cached app still works */ });
+}
+
 if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
+  navigator.serviceWorker.addEventListener("controllerchange", function(){
+    if(!swApplyingUpdate) return;
+    swApplyingUpdate = false;
+    window.location.reload();
+  });
+
   window.addEventListener("load", function(){
-    navigator.serviceWorker.register("./sw.js").catch(function(){ /* offline caching unavailable — app still runs */ });
+    navigator.serviceWorker.register("./sw.js", {updateViaCache:"none"}).then(function(reg){
+      watchForUpdate(reg);
+      checkForUpdate(reg);
+      window.addEventListener("focus", function(){ checkForUpdate(reg); });
+      document.addEventListener("visibilitychange", function(){
+        if(document.visibilityState === "visible") checkForUpdate(reg);
+      });
+    }).catch(function(){ /* offline caching unavailable — app still runs */ });
   });
 }
 
@@ -1119,19 +1215,23 @@ if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
   var bar = document.createElement("div");
-  bar.style.cssText = "position:fixed;left:8px;right:8px;bottom:70px;z-index:70;background:var(--ink);color:var(--bg);" +
-    "padding:11px 13px;border-radius:12px;font-size:13px;line-height:1.35;display:flex;gap:10px;align-items:flex-start;box-shadow:0 6px 20px rgba(0,0,0,.25)";
-  bar.innerHTML = '<span style="flex:1">' +
+  bar.className = "sysnotice";
+  bar.innerHTML = '<span class="msg">' +
     (isIOS
       ? 'Install for offline use: tap <b>Share</b>, then <b>Add to Home Screen</b>.'
       : 'Install for offline use: open the browser menu and choose <b>Add to Home screen</b>.') +
     '</span>';
   var x = document.createElement("button");
   x.textContent = "Got it";
-  x.style.cssText = "background:none;border:1px solid currentColor;color:inherit;border-radius:8px;padding:5px 9px;font:inherit;font-size:12px;cursor:pointer;flex:none";
-  x.onclick = function(){ store.set("avl_hint_dismissed","1"); bar.parentNode && bar.parentNode.removeChild(bar); };
+  x.onclick = function(){
+    store.set("avl_hint_dismissed","1");
+    if(bar.parentNode) bar.parentNode.removeChild(bar);
+  };
   bar.appendChild(x);
-  setTimeout(function(){ document.body.appendChild(bar); }, 900);
+  setTimeout(function(){
+    var host = document.getElementById("systemNotices");
+    if(host) host.appendChild(bar);
+  }, 900);
 })();
 
 /* expose a few helpers for testing */
