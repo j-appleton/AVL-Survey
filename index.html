@@ -1188,17 +1188,17 @@ function watchForUpdate(reg){
 function checkForUpdate(reg){
   if(swUpdateCheckRunning){
     swUpdateCheckQueued = true;
-    return;
+    return Promise.resolve();
   }
 
   swUpdateCheckRunning = true;
-  reg.update()
+  return reg.update()
     .catch(function(){ /* update check unavailable — cached app still works */ })
     .then(function(){
       swUpdateCheckRunning = false;
       if(swUpdateCheckQueued){
         swUpdateCheckQueued = false;
-        checkForUpdate(reg);
+        return checkForUpdate(reg);
       }
     });
 }
@@ -1213,12 +1213,13 @@ if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
   window.addEventListener("load", function(){
     navigator.serviceWorker.register("./sw.js", {updateViaCache:"none"}).then(function(reg){
       watchForUpdate(reg);
-      checkForUpdate(reg);
       window.addEventListener("focus", function(){ checkForUpdate(reg); });
       document.addEventListener("visibilitychange", function(){
         if(document.visibilityState === "visible") checkForUpdate(reg);
       });
-      if(window.__avl) window.__avl.swReady = true;
+      checkForUpdate(reg).then(function(){
+        if(window.__avl) window.__avl.swReady = true;
+      });
     }).catch(function(){ /* offline caching unavailable — app still runs */ });
   });
 }
