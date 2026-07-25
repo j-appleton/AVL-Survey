@@ -1124,6 +1124,8 @@ render();
 /* ---- offline service worker ---- */
 var swApplyingUpdate = false;
 var swUpdateDismissed = false;
+var swUpdateCheckRunning = false;
+var swUpdateCheckQueued = false;
 
 function showUpdateNotice(reg){
   if(!reg || !reg.waiting || swUpdateDismissed) return;
@@ -1184,7 +1186,21 @@ function watchForUpdate(reg){
 }
 
 function checkForUpdate(reg){
-  reg.update().catch(function(){ /* update check unavailable — cached app still works */ });
+  if(swUpdateCheckRunning){
+    swUpdateCheckQueued = true;
+    return;
+  }
+
+  swUpdateCheckRunning = true;
+  reg.update()
+    .catch(function(){ /* update check unavailable — cached app still works */ })
+    .then(function(){
+      swUpdateCheckRunning = false;
+      if(swUpdateCheckQueued){
+        swUpdateCheckQueued = false;
+        checkForUpdate(reg);
+      }
+    });
 }
 
 if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
