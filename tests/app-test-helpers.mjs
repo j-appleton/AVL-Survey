@@ -59,3 +59,33 @@ export function launchBrowser(){
   var executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
   return chromium.launch({headless:true, executablePath:executablePath});
 }
+
+export async function until(check, timeoutMs, intervalMs){
+  var timeout = timeoutMs || 10000;
+  var interval = intervalMs || 25;
+  var started = Date.now();
+  var lastError = null;
+
+  while(Date.now() - started < timeout){
+    try {
+      if(await check()) return;
+    } catch(error){
+      lastError = error;
+    }
+    await new Promise(function(resolve){ setTimeout(resolve, interval); });
+  }
+
+  var message = "Condition was not met within " + timeout + " ms";
+  if(lastError && lastError.message) message += ": " + lastError.message;
+  throw new Error(message);
+}
+
+export function cacheNameFromSource(source){
+  var match = source.match(/var CACHE\s*=\s*"([^"]+)"/);
+  if(!match) throw new Error("Could not find the service-worker cache name");
+  return match[1];
+}
+
+export async function readCacheName(root){
+  return cacheNameFromSource(await readFile(join(root, "sw.js"), "utf8"));
+}

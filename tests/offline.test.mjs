@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { launchBrowser, serve } from "./app-test-helpers.mjs";
+import { launchBrowser, readCacheName, serve, until } from "./app-test-helpers.mjs";
 
 var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -14,9 +14,11 @@ test("the installed app reloads offline with survey data intact", async function
     var context = await browser.newContext({serviceWorkers:"allow"});
     var page = await context.newPage();
     await page.goto(server.origin + "/", {waitUntil:"domcontentloaded"});
-    await page.waitForFunction(async function(){
-      var reg = await navigator.serviceWorker.getRegistration();
-      return !!(reg && reg.active && navigator.serviceWorker.controller);
+    await until(function(){
+      return page.evaluate(async function(){
+        var reg = await navigator.serviceWorker.getRegistration();
+        return !!(reg && reg.active && navigator.serviceWorker.controller);
+      });
     });
 
     assert.equal(
@@ -32,12 +34,22 @@ test("the installed app reloads offline with survey data intact", async function
       }),
       true
     );
-    await page.waitForTimeout(350);
+    await until(function(){
+      return page.evaluate(function(){
+        var raw = window.__avl.raw();
+        if(!raw) return false;
+        try {
+          return JSON.parse(raw).data.visit.client === "Offline survivor";
+        } catch(error){
+          return false;
+        }
+      });
+    });
 
     var cached = await page.evaluate(async function(){
       return (await caches.keys()).sort();
     });
-    assert.deepEqual(cached, ["avl-survey-v2"]);
+    assert.deepEqual(cached, [await readCacheName(ROOT)]);
 
     await context.setOffline(true);
     await page.reload({waitUntil:"domcontentloaded"});

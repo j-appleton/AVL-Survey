@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { cacheNameFromSource, until } from "./app-test-helpers.mjs";
 
 var TEST_DIR = dirname(fileURLToPath(import.meta.url));
 var ROOT = dirname(TEST_DIR);
@@ -76,9 +77,11 @@ test("an update waits for approval and preserves survey data", async function(){
     var context = await browser.newContext({serviceWorkers:"allow"});
     var page = await context.newPage();
     await page.goto(server.origin + "/", {waitUntil:"domcontentloaded"});
-    await page.waitForFunction(async function(){
-      var reg = await navigator.serviceWorker.getRegistration();
-      return !!(reg && reg.active && navigator.serviceWorker.controller);
+    await until(function(){
+      return page.evaluate(async function(){
+        var reg = await navigator.serviceWorker.getRegistration();
+        return !!(reg && reg.active && navigator.serviceWorker.controller);
+      });
     });
 
     await page.evaluate(function(){
@@ -102,8 +105,14 @@ test("an update waits for approval and preserves survey data", async function(){
 
     var swPath = join(fixture, "sw.js");
     var swSource = await readFile(swPath, "utf8");
-    assert.match(swSource, /avl-survey-v2/);
-    await writeFile(swPath, swSource.replace("avl-survey-v2", "avl-survey-v3"));
+    var currentCache = cacheNameFromSource(swSource);
+    var nextCache = currentCache + "-test-update";
+    var nextSource = swSource.replace(
+      'var CACHE = "' + currentCache + '"',
+      'var CACHE = "' + nextCache + '"'
+    );
+    assert.notEqual(nextSource, swSource);
+    await writeFile(swPath, nextSource);
 
     await page.evaluate(function(){ window.dispatchEvent(new Event("focus")); });
     await page.locator("#swUpdateNotice").waitFor({state:"visible"});
@@ -118,7 +127,7 @@ test("an update waits for approval and preserves survey data", async function(){
     });
     assert.equal(waitingState.waiting, true);
     assert.equal(waitingState.client, "Update survivor");
-    assert.deepEqual(waitingState.caches, ["avl-survey-v2", "avl-survey-v3"]);
+    assert.deepEqual(waitingState.caches, [currentCache, nextCache].sort());
 
     await page.getByRole("button", {name:"Later", exact:true}).click();
     await page.locator("#swUpdateNotice").waitFor({state:"detached"});
@@ -149,7 +158,7 @@ test("an update waits for approval and preserves survey data", async function(){
     assert.equal(appliedState.waiting, false);
     assert.equal(appliedState.client, "Update survivor");
     assert.equal(appliedState.room, "Preserved room");
-    assert.deepEqual(appliedState.caches, ["avl-survey-v3"]);
+    assert.deepEqual(appliedState.caches, [nextCache]);
 
     await context.close();
   } finally {
