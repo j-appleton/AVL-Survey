@@ -60,8 +60,11 @@ it works with no signal — the service worker caches everything on first load.
 - The **core** counter in the header tracks the small subset worth chasing before
   you leave site. Everything else is optional.
 - **+ Room** adds a space; **Duplicate** clones one for near-identical rooms.
-- **Export data** downloads a JSON backup. **Import data** restores it on another
-  device. **Show raw data** is the fallback if a download is ever blocked.
+- **Export data** downloads a versioned JSON backup. **Import** validates and
+  upgrades older exports before applying them. **Show raw data** is the fallback
+  if a download is ever blocked.
+- Importing over work and clearing a survey create a recoverable snapshot.
+  **Restore backup** appears whenever one is available.
 - **PDF** builds a print report — use *Share → Print → pinch out → Save as PDF*.
 
 ### Ambient light
@@ -105,14 +108,17 @@ files from an iPhone.
 
 ## Tests
 
-The browser regression test starts the app on localhost, installs the service
-worker, saves a sample survey, changes the worker cache version, and verifies:
+The browser suites start the app on localhost and verify:
 
-- the new worker waits rather than taking control
-- **Later** preserves the open session
-- **Update** activates the worker and reloads
-- saved visit and room data survive
-- the old cache is removed only after activation
+- legacy data migrates to schema v2 and saves in a versioned envelope
+- damaged, foreign, and newer-schema imports cannot replace valid work
+- import and clear snapshots can be restored, and restore is itself undoable
+- unreadable stored data is salvaged rather than silently discarded
+- storage warnings measure the localStorage limit that photos actually consume
+- the ambient-light and DISCAS calculations retain their domain thresholds
+- the installed app reloads offline with survey data intact
+- a new service worker waits for **Update**, **Later** preserves the open session,
+  and old caches are removed only after explicit activation
 
 Run it with:
 
@@ -128,3 +134,9 @@ GitHub Actions runs the same test for pull requests and pushes to `main`.
 
 Everything lives in your phone's browser storage. Clearing Safari website data,
 or deleting the home screen app, wipes it. **Export after every site visit.**
+
+The app stores schema-versioned data and keeps a pre-destructive backup before
+import or clear. Unreadable stored data is retained separately for recovery. The
+Data & storage card measures usage against the approximately 5 MB localStorage
+ceiling, warns at 60%, and escalates at 85%. This makes the current photo limit
+visible; moving photos to IndexedDB is still the next storage task.
