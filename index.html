@@ -1218,6 +1218,7 @@ if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
       document.addEventListener("visibilitychange", function(){
         if(document.visibilityState === "visible") checkForUpdate(reg);
       });
+      if(window.__avl) window.__avl.swReady = true;
     }).catch(function(){ /* offline caching unavailable — app still runs */ });
   });
 }
@@ -1251,7 +1252,15 @@ if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
 })();
 
 /* expose a few helpers for testing */
-window.__avl = { recNits:recNits, recLumens:recLumens, minDiag:minDiag, maxViewFt:maxViewFt, targetFL:targetFL, S:function(){ return S; } };
+window.__avl = {
+  recNits:recNits,
+  recLumens:recLumens,
+  minDiag:minDiag,
+  maxViewFt:maxViewFt,
+  targetFL:targetFL,
+  S:function(){ return S; },
+  swReady:false
+};
 </script>
 </body>
 </html>

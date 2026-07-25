@@ -96,6 +96,9 @@ test("an update waits for approval and preserves survey data", async function(){
       await page.evaluate(function(){ return window.__avl.S().visit.client; }),
       "Update survivor"
     );
+    await page.waitForFunction(function(){
+      return window.__avl && window.__avl.swReady === true;
+    });
 
     var swPath = join(fixture, "sw.js");
     var swSource = await readFile(swPath, "utf8");
