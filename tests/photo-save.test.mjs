@@ -119,6 +119,7 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
     assert.equal(shared.fetchCalls, 0, "the data URL must be decoded synchronously without fetch()");
     assert.equal(shared.state, before, "starting a share must not mutate survey state");
     assert.equal(await save.isDisabled(), true, "the in-flight guard must disable repeat taps");
+    assert.doesNotMatch(await page.locator(".phviewer").innerText(), /\bSaved\b/i, "in-flight UI must not claim a Photos/Gallery save");
 
     await page.evaluate(function(){
       document.querySelector("[data-phv-save]").click();
