@@ -224,10 +224,7 @@ test("destructive actions need two taps and never use a native dialog", async fu
   });
 });
 
-test("photo thumbnails are inert without mutating the survey (transitional guard)", async function(){
-  /* This pins the pre-v1.4 behaviour while the photo markup is restructured.
-     The viewer PR must deliberately replace this assertion with "opens the
-     viewer without mutating state" rather than treating inertness as permanent. */
+test("photo thumbnails open the stored image without mutating the survey", async function(){
   await withApp(async function(page){
     await page.addInitScript(function(){
       window.__confirmCalls = 0;
@@ -236,24 +233,27 @@ test("photo thumbnails are inert without mutating the survey (transitional guard
   }, async function(page){
     await importPhotos(page, "Photo guard");
 
-    var before = await page.evaluate(function(){
-      return {
-        photos:window.__avl.S().photos["1|notes"].slice(),
-        bodyChildren:document.body.children.length
-      };
-    });
+    var before = await page.evaluate(function(){ return JSON.stringify(window.__avl.S()); });
 
     await page.locator('[data-photos="1|notes"] .ph img').nth(1).click();
 
     var after = await page.evaluate(function(){
+      var viewer = document.querySelector(".phviewer");
+      var image = viewer.querySelector(".phvimage");
       return {
-        photos:window.__avl.S().photos["1|notes"].slice(),
-        bodyChildren:document.body.children.length,
+        state:JSON.stringify(window.__avl.S()),
+        dialog:viewer.getAttribute("role"),
+        modal:viewer.getAttribute("aria-modal"),
+        src:image.getAttribute("src"),
+        fit:getComputedStyle(image).objectFit,
         confirms:window.__confirmCalls
       };
     });
-    assert.deepEqual(after.photos, before.photos, "thumbnail taps must not alter photo state");
-    assert.equal(after.bodyChildren, before.bodyChildren, "the current thumbnail tap must stay inert");
+    assert.equal(after.state, before, "opening the viewer must not alter survey state");
+    assert.equal(after.dialog, "dialog");
+    assert.equal(after.modal, "true");
+    assert.equal(after.src, distinctPhotos()[1], "the viewer must use the selected thumbnail's own source");
+    assert.equal(after.fit, "contain", "the stored image must be shown uncropped");
     assert.equal(after.confirms, 0, "thumbnail taps must not invoke a native dialog");
   });
 });
@@ -299,7 +299,7 @@ test("photo controls are siblings and two taps delete only the armed image", asy
     assert.equal(structure.nestedButtons, 0, "photo controls must never be nested buttons");
     structure.items.forEach(function(item){
       assert.equal(item.overflow, "visible", "the positioned wrapper must remain clip-free");
-      assert.equal(item.previewTag, "DIV", "the thumbnail stays non-interactive until the viewer PR");
+      assert.equal(item.previewTag, "BUTTON", "the thumbnail must be a real activatable control");
       assert.equal(item.previewClass, "ph");
       assert.equal(item.deleteTag, "BUTTON");
       assert.equal(item.deleteClass, "phdel");
