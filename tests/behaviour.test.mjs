@@ -20,6 +20,30 @@ async function importRoom(page, data){
   assert.equal(imported, true);
 }
 
+function distinctPhotos(){
+  return [
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='red'/%3E%3C/svg%3E",
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='green'/%3E%3C/svg%3E",
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='blue'/%3E%3C/svg%3E"
+  ];
+}
+
+async function importPhotos(page, name){
+  var photos = distinctPhotos();
+  var imported = await page.evaluate(function(payload){
+    return window.__avl.applyImport(JSON.stringify({
+      visit:{},
+      log:{},
+      rooms:[{id:1,d:{name:payload.name}}],
+      photos:{"1|notes":payload.photos},
+      skipped:{},
+      ui:{"1|notes":true}
+    }));
+  }, {name:name, photos:photos});
+  assert.equal(imported, true);
+  return photos;
+}
+
 async function withApp(setup, run){
   var server = await serve(ROOT);
   var browser = await launchBrowser();
@@ -210,22 +234,7 @@ test("photo thumbnails are inert without mutating the survey (transitional guard
       window.confirm = function(){ window.__confirmCalls++; return true; };
     });
   }, async function(page){
-    var photos = [
-      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='red'/%3E%3C/svg%3E",
-      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='green'/%3E%3C/svg%3E",
-      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='blue'/%3E%3C/svg%3E"
-    ];
-    var imported = await page.evaluate(function(photoData){
-      return window.__avl.applyImport(JSON.stringify({
-        visit:{},
-        log:{},
-        rooms:[{id:1,d:{name:"Photo guard"}}],
-        photos:{"1|notes":photoData},
-        skipped:{},
-        ui:{"1|notes":true}
-      }));
-    }, photos);
-    assert.equal(imported, true);
+    await importPhotos(page, "Photo guard");
 
     var before = await page.evaluate(function(){
       return {
@@ -249,47 +258,216 @@ test("photo thumbnails are inert without mutating the survey (transitional guard
   });
 });
 
-test("photo deletion removes exactly the selected image without a native dialog", async function(){
-  /* Three visibly distinct images make an off-by-one splice observable: deleting
-     green must leave red followed by blue, not merely reduce the count. */
+test("photo controls are siblings and two taps delete only the armed image", async function(){
+  /* Three visibly distinct images make positional mistakes observable. Arming
+     green, switching the arm to red, then deleting red must leave green + blue
+     and a fresh unarmed render. */
   await withApp(async function(page){
     await page.addInitScript(function(){
       window.__confirmCalls = 0;
       window.confirm = function(){ window.__confirmCalls++; return true; };
     });
   }, async function(page){
-    var red = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='red'/%3E%3C/svg%3E";
-    var green = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='green'/%3E%3C/svg%3E";
-    var blue = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='blue'/%3E%3C/svg%3E";
-    var imported = await page.evaluate(function(photoData){
-      return window.__avl.applyImport(JSON.stringify({
-        visit:{},
-        log:{},
-        rooms:[{id:1,d:{name:"Delete guard"}}],
-        photos:{"1|notes":photoData},
-        skipped:{},
-        ui:{"1|notes":true}
-      }));
-    }, [red, green, blue]);
-    assert.equal(imported, true);
+    var photos = await importPhotos(page, "Delete guard");
 
-    await page.locator('[data-photos="1|notes"] [data-delph="1"]').click();
+    var structure = await page.evaluate(function(){
+      var strip = document.querySelector('[data-photos="1|notes"]');
+      var items = Array.prototype.filter.call(strip.children, function(child){
+        return child.classList.contains("photoitem");
+      });
+      return {
+        itemCount:items.length,
+        lastIsAdd:strip.lastElementChild.classList.contains("addph"),
+        nestedButtons:strip.querySelectorAll(".ph button, button button").length,
+        items:items.map(function(item){
+          return {
+            overflow:getComputedStyle(item).overflow,
+            previewTag:item.children[0] && item.children[0].tagName,
+            previewClass:item.children[0] && item.children[0].className,
+            deleteTag:item.children[1] && item.children[1].tagName,
+            deleteClass:item.children[1] && item.children[1].className,
+            deleteDirect:item.children[1] && item.children[1].parentNode === item
+          };
+        }),
+        labels:Array.prototype.map.call(strip.querySelectorAll("[data-delph]"), function(btn){
+          return btn.getAttribute("aria-label");
+        })
+      };
+    });
+    assert.equal(structure.itemCount, 3);
+    assert.equal(structure.lastIsAdd, true, "Add Photo must remain last in the strip");
+    assert.equal(structure.nestedButtons, 0, "photo controls must never be nested buttons");
+    structure.items.forEach(function(item){
+      assert.equal(item.overflow, "visible", "the positioned wrapper must remain clip-free");
+      assert.equal(item.previewTag, "DIV", "the thumbnail stays non-interactive until the viewer PR");
+      assert.equal(item.previewClass, "ph");
+      assert.equal(item.deleteTag, "BUTTON");
+      assert.equal(item.deleteClass, "phdel");
+      assert.equal(item.deleteDirect, true, "thumbnail and delete control must be siblings");
+    });
+    assert.deepEqual(structure.labels, [
+      "Delete photo 1 of 3",
+      "Delete photo 2 of 3",
+      "Delete photo 3 of 3"
+    ]);
+
+    var green = page.locator('[data-photos="1|notes"] [data-delph="1"]');
+    var greenBefore = await green.evaluate(function(btn){
+      return {
+        width:btn.getBoundingClientRect().width,
+        background:getComputedStyle(btn).backgroundColor
+      };
+    });
+    await green.click();
+
+    var greenArmed = await page.evaluate(function(){
+      var btn = document.querySelector('[data-photos="1|notes"] [data-delph="1"]');
+      var item = btn.parentNode.getBoundingClientRect();
+      var box = btn.getBoundingClientRect();
+      return {
+        photos:window.__avl.S().photos["1|notes"].slice(),
+        armed:btn.getAttribute("data-armed"),
+        text:btn.textContent,
+        label:btn.getAttribute("aria-label"),
+        width:box.width,
+        background:getComputedStyle(btn).backgroundColor,
+        contained:box.left >= item.left && box.right <= item.right
+      };
+    });
+    assert.deepEqual(greenArmed.photos, photos, "the first tap must not delete anything");
+    assert.equal(greenArmed.armed, "1");
+    assert.equal(greenArmed.text, "Delete?");
+    assert.equal(greenArmed.label, "Tap again to delete photo 2 of 3");
+    assert.ok(greenArmed.width > greenBefore.width, "the armed icon must expand visibly");
+    assert.notEqual(greenArmed.background, greenBefore.background, "the armed state must change colour");
+    assert.equal(greenArmed.contained, true, "the armed pill must stay inside its 76px tile");
+
+    var red = page.locator('[data-photos="1|notes"] [data-delph="0"]');
+    await red.click();
+    var switched = await page.evaluate(function(){
+      return {
+        photos:window.__avl.S().photos["1|notes"].slice(),
+        armed:Array.prototype.map.call(
+          document.querySelectorAll('[data-photos="1|notes"] .phdel[data-armed="1"]'),
+          function(btn){ return btn.getAttribute("data-delph"); }
+        ),
+        greenLabel:document.querySelector('[data-photos="1|notes"] [data-delph="1"]').getAttribute("aria-label"),
+        redLabel:document.querySelector('[data-photos="1|notes"] [data-delph="0"]').getAttribute("aria-label")
+      };
+    });
+    assert.deepEqual(switched.photos, photos, "switching the armed photo must not delete anything");
+    assert.deepEqual(switched.armed, ["0"], "only one photo delete may remain armed");
+    assert.equal(switched.greenLabel, "Delete photo 2 of 3", "the previous control must fully reset");
+    assert.equal(switched.redLabel, "Tap again to delete photo 1 of 3");
+
+    await red.click();
     await page.waitForFunction(function(){
       return window.__avl.S().photos["1|notes"].length === 2;
-    });
+    }, null, {timeout:2000});
 
     var result = await page.evaluate(function(){
+      var strip = document.querySelector('[data-photos="1|notes"]');
       return {
         photos:window.__avl.S().photos["1|notes"].slice(),
         rendered:Array.prototype.map.call(
-          document.querySelectorAll('[data-photos="1|notes"] .ph img'),
+          strip.querySelectorAll(".ph img"),
           function(img){ return img.getAttribute("src"); }
         ),
+        armed:strip.querySelectorAll('.phdel[data-armed="1"]').length,
+        labels:Array.prototype.map.call(strip.querySelectorAll("[data-delph]"), function(btn){
+          return btn.getAttribute("aria-label");
+        }),
+        lastIsAdd:strip.lastElementChild.classList.contains("addph"),
         confirms:window.__confirmCalls
       };
     });
-    assert.deepEqual(result.photos, [red, blue], "deletion must remove green and preserve both neighbours");
-    assert.deepEqual(result.rendered, [red, blue], "the rendered strip must match the saved photo order");
+    assert.deepEqual(result.photos, [photos[1], photos[2]], "deletion must remove red and preserve green + blue");
+    assert.deepEqual(result.rendered, [photos[1], photos[2]], "the rendered strip must match saved order");
+    assert.equal(result.armed, 0, "the deletion render must clear every armed state");
+    assert.deepEqual(result.labels, ["Delete photo 1 of 2", "Delete photo 2 of 2"]);
+    assert.equal(result.lastIsAdd, true, "Add Photo must remain last after re-render");
     assert.equal(result.confirms, 0, "photo deletion must not invoke a native dialog");
+  });
+});
+
+test("photo delete arming expires without deleting", async function(){
+  await withApp(async function(page){
+    await page.addInitScript(function(){
+      var realSetTimeout = window.setTimeout.bind(window);
+      var realClearTimeout = window.clearTimeout.bind(window);
+      window.__confirmCalls = 0;
+      window.__photoArmTimers = [];
+      window.__nextPhotoArmTimer = -9000;
+      window.confirm = function(){ window.__confirmCalls++; return true; };
+      window.setTimeout = function(fn, delay){
+        if(delay === 3500){
+          var timer = {
+            id:window.__nextPhotoArmTimer--,
+            fn:fn,
+            cancelled:false
+          };
+          window.__photoArmTimers.push(timer);
+          return timer.id;
+        }
+        return realSetTimeout(fn, delay);
+      };
+      window.clearTimeout = function(id){
+        var timer = window.__photoArmTimers.filter(function(item){ return item.id === id; })[0];
+        if(timer){
+          timer.cancelled = true;
+          return;
+        }
+        return realClearTimeout(id);
+      };
+    });
+  }, async function(page){
+    var photos = await importPhotos(page, "Timeout guard");
+    var blue = page.locator('[data-photos="1|notes"] [data-delph="2"]');
+    await blue.click();
+
+    assert.equal(
+      await page.evaluate(function(){ return window.__photoArmTimers.length; }),
+      1,
+      "arming must schedule a reset"
+    );
+    await page.evaluate(function(){
+      var timer = window.__photoArmTimers[0];
+      if(!timer.cancelled) timer.fn();
+    });
+
+    var result = await page.evaluate(function(){
+      var btn = document.querySelector('[data-photos="1|notes"] [data-delph="2"]');
+      return {
+        photos:window.__avl.S().photos["1|notes"].slice(),
+        armed:btn.hasAttribute("data-armed"),
+        text:btn.textContent,
+        label:btn.getAttribute("aria-label"),
+        confirms:window.__confirmCalls
+      };
+    });
+    assert.deepEqual(result.photos, photos, "expiry must not delete anything");
+    assert.equal(result.armed, false);
+    assert.equal(result.text, "\u00d7");
+    assert.equal(result.label, "Delete photo 3 of 3");
+    assert.equal(result.confirms, 0);
+
+    await page.locator('[data-photos="1|notes"] [data-delph="1"]').click();
+    await page.locator('[data-photos="1|notes"] [data-delph="0"]').click();
+    await page.locator('[data-photos="1|notes"] [data-delph="1"]').click();
+    var switched = await page.evaluate(function(){
+      return {
+        cancelled:window.__photoArmTimers.map(function(timer){ return timer.cancelled; }),
+        armed:Array.prototype.map.call(
+          document.querySelectorAll('[data-photos="1|notes"] .phdel[data-armed="1"]'),
+          function(btn){ return btn.getAttribute("data-delph"); }
+        )
+      };
+    });
+    assert.deepEqual(
+      switched.cancelled,
+      [true, true, true, false],
+      "resetting or switching a control must cancel every superseded timer"
+    );
+    assert.deepEqual(switched.armed, ["1"], "only the most recently armed photo may remain active");
   });
 });

@@ -115,6 +115,8 @@ The browser suites start the app on localhost and verify:
 - import and clear snapshots can be restored, and restore is itself undoable
 - unreadable stored data is salvaged rather than silently discarded
 - storage warnings measure the localStorage limit that photos actually consume
+- photo controls remain valid siblings, only one delete can be armed at a time,
+  and a second tap removes exactly the selected image
 - the ambient-light and DISCAS calculations retain their domain thresholds
 - the installed app reloads offline with survey data intact
 - a new service worker waits for **Update**, **Later** preserves the open session,
@@ -136,7 +138,8 @@ Everything lives in your phone's browser storage. Clearing Safari website data,
 or deleting the home screen app, wipes it. **Export after every site visit.**
 
 The app stores schema-versioned data and keeps a pre-destructive backup before
-import or clear. Unreadable stored data is retained separately for recovery. The
+import or clear. Individual photo deletion requires two taps but is not
+recoverable. Unreadable stored data is retained separately for recovery. The
 Data & storage card measures usage against the approximately 5 MB localStorage
 ceiling, warns at 60%, and escalates at 85%. This makes the current photo limit
 visible; moving photos to IndexedDB is still the next storage task.

@@ -9,6 +9,12 @@ var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 var LEGACY_V1 = JSON.parse(
   await readFile(join(ROOT, "tests", "fixtures", "legacy-v1.json"), "utf8")
 );
+var PACKAGE_VERSION = JSON.parse(
+  await readFile(join(ROOT, "package.json"), "utf8")
+).version;
+var PACKAGE_LOCK = JSON.parse(
+  await readFile(join(ROOT, "package-lock.json"), "utf8")
+);
 
 test("data migrations, validation, backup, salvage, and storage warnings", async function(){
   var server = await serve(ROOT);
@@ -23,7 +29,9 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
     var versions = await page.evaluate(function(){
       return {app:window.__avl.APP_VERSION, schema:window.__avl.SCHEMA};
     });
-    assert.deepEqual(versions, {app:"1.2.0", schema:2});
+    assert.deepEqual(versions, {app:PACKAGE_VERSION, schema:2});
+    assert.equal(PACKAGE_LOCK.version, PACKAGE_VERSION);
+    assert.equal(PACKAGE_LOCK.packages[""].version, PACKAGE_VERSION);
 
     var migration = await page.evaluate(function(payload){
       return window.__avl.migrate(payload);
