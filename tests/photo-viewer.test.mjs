@@ -60,7 +60,7 @@ test("viewer navigates within one section and shows the selected stored source u
         modal:document.querySelector(".phviewer").getAttribute("aria-modal"),
         title:document.querySelector(".phvtitle").textContent,
         count:document.querySelector(".phvtop .phvcount").textContent,
-        bottom:document.querySelector("[data-phv-bottom]").textContent,
+        saveLabel:document.querySelector("[data-phv-save]").textContent,
         src:image.getAttribute("src"),
         fit:getComputedStyle(image).objectFit,
         prevDisabled:document.querySelector("[data-phv-prev]").disabled,
@@ -72,7 +72,7 @@ test("viewer navigates within one section and shows the selected stored source u
     assert.equal(opened.modal, "true");
     assert.equal(opened.title, "Photo guard \u00b7 Notes & red flags");
     assert.equal(opened.count, "Photo 2 of 3");
-    assert.equal(opened.bottom, opened.count);
+    assert.equal(opened.saveLabel, "Save photo\u2026");
     assert.equal(opened.src, selectedSource, "the viewer must reuse the thumbnail's exact stored source");
     assert.equal(opened.fit, "contain");
     assert.equal(opened.prevDisabled, false);

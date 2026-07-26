@@ -162,7 +162,17 @@ button.btn:active{transform:translateY(1px)}
 .phvnav{position:absolute;top:50%;transform:translateY(-50%);z-index:1}
 .phvnav.prev{left:4px}.phvnav.next{right:4px}
 .phvnav:disabled{opacity:.28;cursor:default}
-.phvbottom{justify-content:center}
+.phvbottom{justify-content:center;flex-wrap:wrap;padding-top:8px}
+.phvsave,.phvdownload{
+  min-height:48px;border-radius:12px;padding:11px 18px;font:inherit;font-size:15px;
+  font-weight:700;cursor:pointer;text-align:center
+}
+.phvsave{width:min(100%,360px);border:1px solid #60a5fa;background:#2563eb;color:#fff}
+.phvsave:disabled{opacity:.58;cursor:default}
+.phvdownload{border:1px solid rgba(255,255,255,.5);background:transparent;color:#fff}
+.phvdownload[hidden]{display:none}
+.phvhelp,.phvstatus{flex:0 0 100%;text-align:center;font-size:12px;line-height:1.35;color:#cbd5e1}
+.phvstatus:empty{display:none}
 
 /* computed panel */
 .calc{background:var(--accent-soft);border:1px solid var(--accent);border-radius:10px;padding:12px;margin:14px 0}
@@ -293,7 +303,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.4.0";
+var APP_VERSION = "1.4.1";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -586,13 +596,16 @@ function envelope(){
 }
 
 var saveTimer = null;
+function persistSurvey(){
+  if(S.meta) S.meta.updated = nowISO();
+  var ok = store.set(KEY, JSON.stringify(envelope()));
+  updateStorageBar();
+  return ok;
+}
 function save(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function(){
-    if(S.meta) S.meta.updated = nowISO();
-    var ok = store.set(KEY, JSON.stringify(envelope()));
-    if(!ok) toast("Storage full — export your data now");
-    updateStorageBar();
+    if(!persistSurvey()) toast("Storage full — export your data now");
   }, 250);
 }
 
@@ -741,6 +754,7 @@ function armPhotoDelete(btn, fn){
 /* The viewer holds only ephemeral UI state. Photos remain in the survey model,
    and closing re-finds the trigger because render() may replace its DOM node. */
 var photoViewer = null;
+var photoShareFlight = null;
 function photoContext(key){
   if(key === "log|main") return "Site logistics & access";
   var bits = String(key).split("|");
@@ -796,6 +810,185 @@ function restorePhotoViewerScroll(lock){
   b.style.overflow = lock.overflow;
   window.scrollTo(0, lock.y);
 }
+function photoIdentity(key, index){
+  return String(key) + "|" + String(index);
+}
+function photoExtension(mime){
+  var types = {
+    "image/jpeg":"jpg",
+    "image/png":"png",
+    "image/webp":"webp",
+    "image/gif":"gif",
+    "image/svg+xml":"svg"
+  };
+  return types[mime] || "img";
+}
+function photoFileName(key, index, mime){
+  /* key is an internal room-id|section-id token, never user-authored text.
+     slug() remains the one place client text is sanitised. */
+  return slug() + "-" + String(key).split("|").join("-") +
+    "-photo-" + (parseInt(index,10) + 1) + "." + photoExtension(mime);
+}
+function dataUrlToFile(dataUrl, key, index){
+  var comma = String(dataUrl).indexOf(",");
+  if(String(dataUrl).slice(0,5) !== "data:" || comma < 6) throw new Error("Invalid photo data");
+  var parts = String(dataUrl).slice(5,comma).split(";");
+  var mime = parts[0] || "application/octet-stream";
+  var isBase64 = parts.indexOf("base64") > -1;
+  var payload = String(dataUrl).slice(comma + 1);
+  var bytes;
+  if(isBase64){
+    var binary = atob(payload);
+    bytes = new Uint8Array(binary.length);
+    for(var i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+  } else {
+    var decoded = decodeURIComponent(payload);
+    if(window.TextEncoder){
+      bytes = new TextEncoder().encode(decoded);
+    } else {
+      var utf8 = unescape(encodeURIComponent(decoded));
+      bytes = new Uint8Array(utf8.length);
+      for(var j=0;j<utf8.length;j++) bytes[j] = utf8.charCodeAt(j);
+    }
+  }
+  return new File([bytes], photoFileName(key,index,mime), {type:mime,lastModified:Date.now()});
+}
+function defaultPhotoShareHelp(){
+  return "Opens your device share sheet. Choose Save Image, Photos, or Gallery.";
+}
+function refreshPhotoShareUI(){
+  if(!photoViewer || !photoViewer.save) return;
+  var busy = !!photoShareFlight;
+  var id = photoIdentity(photoViewer.key, photoViewer.index);
+  photoViewer.save.disabled = busy;
+  photoViewer.save.textContent = busy ? "Opening share sheet\u2026" : "Save photo\u2026";
+  photoViewer.download.hidden = photoViewer.fallbackId !== id;
+  photoViewer.help.textContent = photoViewer.notice || defaultPhotoShareHelp();
+  photoViewer.status.textContent = photoViewer.message || "";
+}
+function finishPhotoShare(flight, outcome, error){
+  if(photoShareFlight !== flight) return;
+  photoShareFlight = null;
+  if(!photoViewer){
+    return;
+  }
+  var currentId = photoIdentity(photoViewer.key, photoViewer.index);
+  photoViewer.message = "";
+  if(outcome === "cancel"){
+    photoViewer.message = "Share cancelled. You can try again.";
+  } else if(outcome === "failure" && currentId === flight.id){
+    photoViewer.fallbackId = flight.id;
+    photoViewer.message = "Could not open the share sheet. Download the image instead.";
+  }
+  refreshPhotoShareUI();
+}
+function sharePhoto(key, index){
+  if(photoShareFlight) return false;
+  var list = S.photos[key] || [];
+  index = parseInt(index,10);
+  if(isNaN(index) || index < 0 || index >= list.length) return false;
+
+  var file;
+  try {
+    /* Keep File construction synchronous and in this click task. Awaiting a
+       data-URL fetch here can lose iOS Safari's transient user activation. */
+    file = dataUrlToFile(list[index], key, index);
+  } catch(error){
+    if(photoViewer){
+      photoViewer.fallbackId = photoIdentity(key,index);
+      photoViewer.message = "This image could not be prepared for sharing.";
+      refreshPhotoShareUI();
+    }
+    return false;
+  }
+
+  var shareData = {files:[file], title:"AVL survey photo"};
+  var supported = false;
+  try {
+    supported = typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare(shareData);
+  } catch(error){
+    supported = false;
+  }
+  if(!supported){
+    if(photoViewer){
+      photoViewer.fallbackId = photoIdentity(key,index);
+      photoViewer.message = "File sharing is not available here. Download the image instead.";
+      refreshPhotoShareUI();
+    }
+    return false;
+  }
+
+  var flight = {
+    id:photoIdentity(key,index),
+    key:String(key),
+    index:index,
+    file:file,
+    leftPage:false
+  };
+  photoShareFlight = flight;
+  if(photoViewer){
+    photoViewer.message = "";
+    refreshPhotoShareUI();
+  }
+
+  var result;
+  try {
+    /* This call must remain in the original click task: no await above it. */
+    result = navigator.share(shareData);
+  } catch(error){
+    finishPhotoShare(flight, error && error.name === "AbortError" ? "cancel" : "failure", error);
+    return false;
+  }
+  Promise.resolve(result).then(function(){
+    /* A resolved share only means the system sheet closed. It does not reveal
+       which destination the user chose, so never claim that the photo saved. */
+    finishPhotoShare(flight, "closed");
+  }).catch(function(error){
+    finishPhotoShare(flight, error && error.name === "AbortError" ? "cancel" : "failure", error);
+  });
+  return true;
+}
+function downloadPhoto(key, index){
+  var list = S.photos[key] || [];
+  index = parseInt(index,10);
+  if(isNaN(index) || index < 0 || index >= list.length) return false;
+  try {
+    var file = dataUrlToFile(list[index], key, index);
+    var url = URL.createObjectURL(file);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = file.name;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 30000);
+    if(photoViewer){
+      photoViewer.message = "Download started. Your browser may put it in Files or Downloads.";
+      refreshPhotoShareUI();
+    }
+    return true;
+  } catch(error){
+    if(photoViewer){
+      photoViewer.message = "This image could not be downloaded. Export the survey data before continuing.";
+      refreshPhotoShareUI();
+    }
+    return false;
+  }
+}
+function movePhotoViewer(delta){
+  if(!photoViewer) return;
+  var list = S.photos[photoViewer.key] || [];
+  var next = photoViewer.index + delta;
+  if(next < 0 || next >= list.length) return;
+  photoViewer.index = next;
+  photoViewer.fallbackId = null;
+  photoViewer.message = "";
+  photoViewer.notice = "";
+  updatePhotoViewer();
+}
 function updatePhotoViewer(){
   if(!photoViewer) return;
   var list = S.photos[photoViewer.key] || [];
@@ -806,9 +999,9 @@ function updatePhotoViewer(){
   photoViewer.image.alt = "Photo " + number + " of " + list.length + " \u2014 " + photoContext(photoViewer.key);
   photoViewer.title.textContent = photoContext(photoViewer.key);
   photoViewer.count.textContent = "Photo " + number + " of " + list.length;
-  photoViewer.bottom.textContent = photoViewer.count.textContent;
   photoViewer.prev.disabled = photoViewer.index === 0;
   photoViewer.next.disabled = photoViewer.index === list.length - 1;
+  refreshPhotoShareUI();
 }
 function closePhotoViewer(){
   if(!photoViewer) return;
@@ -829,14 +1022,12 @@ function photoViewerKeydown(e){
   }
   if(e.key === "ArrowLeft" && !photoViewer.prev.disabled){
     e.preventDefault();
-    photoViewer.index--;
-    updatePhotoViewer();
+    movePhotoViewer(-1);
     return;
   }
   if(e.key === "ArrowRight" && !photoViewer.next.disabled){
     e.preventDefault();
-    photoViewer.index++;
-    updatePhotoViewer();
+    movePhotoViewer(1);
     return;
   }
   if(e.key === "Tab"){
@@ -850,7 +1041,7 @@ function photoViewerKeydown(e){
     }
   }
 }
-function openPhotoViewer(key, index){
+function openPhotoViewer(key, index, notice){
   var list = S.photos[key] || [];
   index = parseInt(index,10);
   if(isNaN(index) || index < 0 || index >= list.length) return false;
@@ -873,26 +1064,41 @@ function openPhotoViewer(key, index){
       '<img class="phvimage" alt="">' +
       '<button type="button" class="phvnav next" data-phv-next aria-label="Next photo">\u203a</button>' +
     '</div>' +
-    '<div class="phvbottom"><span class="phvcount" data-phv-bottom></span></div>';
+    '<div class="phvbottom">' +
+      '<button type="button" class="phvsave" data-phv-save>Save photo\u2026</button>' +
+      '<button type="button" class="phvdownload" data-phv-download hidden>Download image</button>' +
+      '<div class="phvhelp"></div>' +
+      '<div class="phvstatus" aria-live="polite"></div>' +
+    '</div>';
 
   var lock = lockPhotoViewerScroll();
   photoViewer = {
     key:String(key), index:index, returnIndex:index, overlay:overlay, scroll:lock,
+    fallbackId:null, message:"", notice:notice || "",
     image:overlay.querySelector(".phvimage"),
     title:overlay.querySelector(".phvtitle"),
     count:overlay.querySelector(".phvtop .phvcount"),
-    bottom:overlay.querySelector("[data-phv-bottom]"),
     prev:overlay.querySelector("[data-phv-prev]"),
-    next:overlay.querySelector("[data-phv-next]")
+    next:overlay.querySelector("[data-phv-next]"),
+    save:overlay.querySelector("[data-phv-save]"),
+    download:overlay.querySelector("[data-phv-download]"),
+    help:overlay.querySelector(".phvhelp"),
+    status:overlay.querySelector(".phvstatus")
   };
   overlay.querySelector("[data-phv-close]").onclick = closePhotoViewer;
   photoViewer.prev.onclick = function(){
     if(!photoViewer || photoViewer.prev.disabled) return;
-    photoViewer.index--; updatePhotoViewer();
+    movePhotoViewer(-1);
   };
   photoViewer.next.onclick = function(){
     if(!photoViewer || photoViewer.next.disabled) return;
-    photoViewer.index++; updatePhotoViewer();
+    movePhotoViewer(1);
+  };
+  photoViewer.save.onclick = function(){
+    if(photoViewer) sharePhoto(photoViewer.key, photoViewer.index);
+  };
+  photoViewer.download.onclick = function(){
+    if(photoViewer) downloadPhoto(photoViewer.key, photoViewer.index);
   };
   overlay.onclick = function(e){
     if(e.target.hasAttribute && e.target.hasAttribute("data-phv-backdrop")) closePhotoViewer();
@@ -904,6 +1110,17 @@ function openPhotoViewer(key, index){
   overlay.querySelector("[data-phv-close]").focus();
   return true;
 }
+
+/* Some Web Share implementations settle late or not at all after the native
+   sheet backgrounds the PWA. Returning to the page safely clears the guard. */
+document.addEventListener("visibilitychange", function(){
+  if(!photoShareFlight) return;
+  if(document.visibilityState === "hidden"){
+    photoShareFlight.leftPage = true;
+  } else if(photoShareFlight.leftPage){
+    finishPhotoShare(photoShareFlight, "closed");
+  }
+});
 
 /* Escape hatch when downloads are blocked by the viewer */
 function showRaw(text, title){
@@ -1443,13 +1660,32 @@ document.getElementById("filein").addEventListener("change", function(e){
   if(!files.length || !photoTarget) return;
   var key = photoTarget;
   var pending = files.length;
+  var firstAdded = -1;
+  var added = 0;
   files.forEach(function(file){
     compress(file, function(dataUrl){
       if(dataUrl){
         if(!S.photos[key]) S.photos[key] = [];
+        if(firstAdded < 0) firstAdded = S.photos[key].length;
         S.photos[key].push(dataUrl);
+        added++;
       }
-      if(--pending === 0){ save(); render(); }
+      if(--pending === 0){
+        if(!added){
+          toast("Could not add that photo");
+          return;
+        }
+        clearTimeout(saveTimer);
+        var persisted = persistSurvey();
+        render();
+        openPhotoViewer(
+          key,
+          firstAdded,
+          persisted
+            ? "Photo added to the survey. The survey copy is limited to 900px and camera metadata is removed."
+            : "Photo is available now, but survey storage is full. Save a copy and export the survey before closing the app."
+        );
+      }
     });
   });
 });
@@ -1796,6 +2032,10 @@ window.__avl = {
   localBytes:localBytes,
   openPhotoViewer:openPhotoViewer,
   closePhotoViewer:closePhotoViewer,
+  dataUrlToFile:dataUrlToFile,
+  sharePhoto:sharePhoto,
+  downloadPhoto:downloadPhoto,
+  persistSurvey:persistSurvey,
   raw:function(){ return store.get(KEY); },
   backupRaw:function(){ return store.get(BACKUP_KEY); },
   salvageRaw:function(){ return store.get(SALVAGE_KEY); },
