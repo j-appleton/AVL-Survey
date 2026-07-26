@@ -104,7 +104,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v8";   // bump this for every runtime change
+var CACHE = "avl-survey-v9";   // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -142,6 +142,9 @@ The browser suites start the app on localhost and verify:
   storage-full failure remains visible and shareable for the current session
 - new captures are mirrored byte-exactly to IndexedDB under unique stable IDs,
   while schema v2 stays authoritative if the new store is unavailable
+- the derived photo manifest includes every photo exactly once in stable site,
+  room, section, and bucket order; filenames use global references, visible room
+  positions, frozen section slugs, and the source image MIME
 - storage retention reports whether the browser actually granted persistence,
   without changing the localStorage meter or treating the result as a backup
 - the ambient-light and DISCAS calculations retain their domain thresholds
@@ -194,3 +197,7 @@ depends on it.
 The Data & storage card also reports whether the browser granted persistent
 storage. A grant reduces automatic eviction risk but is not a backup and cannot
 survive clearing browser data, so exports remain required after every visit.
+
+Version 1.6 establishes the pure, in-memory photo manifest that future batch
+sharing and PDF captions will use. It does not yet add a batch-share control or
+upload anything; the existing one-photo-at-a-time share action is unchanged.
