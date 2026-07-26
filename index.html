@@ -304,7 +304,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.5.2";
+var APP_VERSION = "1.6.0";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -411,6 +411,29 @@ var ROOM_SECTIONS = [
     {k:"gen",   l:"General notes", t:"area"}
   ]}
 ];
+
+/* Photo package names are a durable handoff contract. Keep these labels
+   independent of the editable UI section titles so a wording change cannot
+   rename files that have already been delivered to a client. */
+var PHOTO_SECTION_META = {
+  main:  {slug:"logistics",          label:"Site logistics & access"},
+  id:    {slug:"room",               label:"Room"},
+  dims:  {slug:"dimensions",         label:"Dimensions"},
+  light: {slug:"ambient-light",      label:"Ambient light"},
+  disp:  {slug:"display",            label:"Display"},
+  audio: {slug:"audio",              label:"Audio"},
+  power: {slug:"power",              label:"Power"},
+  net:   {slug:"network",            label:"Network"},
+  path:  {slug:"pathways",           label:"Pathways"},
+  exist: {slug:"existing-equipment", label:"Existing equipment"},
+  notes: {slug:"notes",              label:"Notes"}
+};
+if(typeof Object.freeze === "function"){
+  Object.keys(PHOTO_SECTION_META).forEach(function(k){
+    Object.freeze(PHOTO_SECTION_META[k]);
+  });
+  Object.freeze(PHOTO_SECTION_META);
+}
 
 /* ============================================================
    LIGHT MODULE DATA
@@ -899,6 +922,116 @@ function photoExtension(mime){
     "image/svg+xml":"svg"
   };
   return types[mime] || "img";
+}
+function photoMime(dataUrl){
+  var raw = String(dataUrl || "");
+  var comma = raw.indexOf(",");
+  if(raw.slice(0,5) !== "data:" || comma < 6) return "application/octet-stream";
+  return (raw.slice(5,comma).split(";")[0] || "application/octet-stream").toLowerCase();
+}
+function photoPad(value, width){
+  var out = String(value);
+  while(out.length < width) out = "0" + out;
+  return out;
+}
+function photoSectionSlug(value){
+  return String(value || "unknown")
+    .replace(/[^a-z0-9]+/gi,"-")
+    .toLowerCase()
+    .replace(/^-+|-+$/g,"") || "unknown";
+}
+function photoManifest(){
+  var photos = S.photos || {};
+  var keys = Object.keys(photos);
+  var consumed = {};
+  var filenames = {};
+  var entries = [];
+  var sequence = 0;
+  var declaredSlugs = {};
+
+  /* A duplicated declared slug makes the handoff ambiguous even though the
+     global reference keeps the complete filename unique. Fail loudly. */
+  Object.keys(PHOTO_SECTION_META).forEach(function(id){
+    var sectionSlug = PHOTO_SECTION_META[id].slug;
+    if(declaredSlugs[sectionSlug]){
+      throw new Error("Duplicate photo section slug: " + sectionSlug);
+    }
+    declaredSlugs[sectionSlug] = true;
+  });
+
+  function addBucket(key, room, roomPosition){
+    consumed[key] = true;
+    var list = photos[key] || [];
+    if(!Array.isArray(list)) return;
+
+    var separator = String(key).indexOf("|");
+    var rawScope = separator > -1 ? String(key).slice(0,separator) : "";
+    var sectionId = key === "log|main"
+      ? "main"
+      : (separator > -1 ? String(key).slice(separator + 1) : String(key));
+    var declared = PHOTO_SECTION_META[sectionId];
+    var sectionSlug = declared ? declared.slug : photoSectionSlug(sectionId);
+    var sectionLabel = declared ? declared.label : String(sectionId || "Unknown");
+    var roomLabel = room ? "R" + photoPad(roomPosition,2) : "SITE";
+    var roomName = room
+      ? ((room.d && room.d.name) || roomLabel)
+      : ((S.visit && S.visit.site) || "Site");
+
+    list.forEach(function(source, bucketIndex){
+      sequence++;
+      var ref = photoPad(sequence,3);
+      var mime = photoMime(source);
+      var filename = ref + "_" + roomLabel + "_" + sectionSlug +
+        "." + photoExtension(mime);
+      if(filenames[filename]) throw new Error("Duplicate photo filename: " + filename);
+      filenames[filename] = true;
+      entries.push({
+        ref:ref,
+        filename:filename,
+        key:String(key),
+        bucketIndex:bucketIndex,
+        roomId:room ? room.id : (rawScope && rawScope !== "log" ? rawScope : null),
+        roomLabel:roomLabel,
+        roomName:roomName,
+        sectionId:sectionId,
+        sectionLabel:sectionLabel,
+        mime:mime,
+        sourceLength:String(source || "").length
+      });
+    });
+  }
+
+  /* Canonical order: site, declared room sections, future room buckets, then
+     anything else. Object insertion order is deliberately never load-bearing. */
+  addBucket("log|main", null, 0);
+  keys.filter(function(key){
+    return !consumed[key] && String(key).indexOf("log|") === 0;
+  }).sort().forEach(function(key){
+    addBucket(key, null, 0);
+  });
+  S.rooms.forEach(function(room, roomIndex){
+    ROOM_SECTIONS.forEach(function(section){
+      addBucket(String(room.id) + "|" + section.id, room, roomIndex + 1);
+    });
+  });
+  S.rooms.forEach(function(room, roomIndex){
+    var prefix = String(room.id) + "|";
+    keys.filter(function(key){
+      return !consumed[key] && String(key).indexOf(prefix) === 0;
+    }).sort().forEach(function(key){
+      addBucket(key, room, roomIndex + 1);
+    });
+  });
+  keys.filter(function(key){
+    return !consumed[key];
+  }).sort().forEach(function(key){
+    addBucket(key, null, 0);
+  });
+
+  if(entries.length !== photoCount()){
+    throw new Error("Photo manifest count does not match survey photo count");
+  }
+  return entries;
 }
 function photoFileName(key, index, mime){
   /* key is an internal room-id|section-id token, never user-authored text.
@@ -2164,6 +2297,9 @@ window.__avl = {
   hasSurveyWork:hasSurveyWork,
   storageHTML:storageHTML,
   localBytes:localBytes,
+  photoCount:photoCount,
+  photoManifest:photoManifest,
+  ROOM_SECTIONS:ROOM_SECTIONS,
   storagePersistStatus:function(){
     return {state:storagePersistState, requested:storagePersistRequested};
   },
