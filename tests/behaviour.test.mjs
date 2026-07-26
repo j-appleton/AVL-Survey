@@ -199,3 +199,97 @@ test("destructive actions need two taps and never use a native dialog", async fu
     );
   });
 });
+
+test("photo thumbnails are inert without mutating the survey (transitional guard)", async function(){
+  /* This pins the pre-v1.4 behaviour while the photo markup is restructured.
+     The viewer PR must deliberately replace this assertion with "opens the
+     viewer without mutating state" rather than treating inertness as permanent. */
+  await withApp(async function(page){
+    await page.addInitScript(function(){
+      window.__confirmCalls = 0;
+      window.confirm = function(){ window.__confirmCalls++; return true; };
+    });
+  }, async function(page){
+    var photos = [
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='red'/%3E%3C/svg%3E",
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='green'/%3E%3C/svg%3E",
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='blue'/%3E%3C/svg%3E"
+    ];
+    var imported = await page.evaluate(function(photoData){
+      return window.__avl.applyImport(JSON.stringify({
+        visit:{},
+        log:{},
+        rooms:[{id:1,d:{name:"Photo guard"}}],
+        photos:{"1|notes":photoData},
+        skipped:{},
+        ui:{"1|notes":true}
+      }));
+    }, photos);
+    assert.equal(imported, true);
+
+    var before = await page.evaluate(function(){
+      return {
+        photos:window.__avl.S().photos["1|notes"].slice(),
+        bodyChildren:document.body.children.length
+      };
+    });
+
+    await page.locator('[data-photos="1|notes"] .ph img').nth(1).click();
+
+    var after = await page.evaluate(function(){
+      return {
+        photos:window.__avl.S().photos["1|notes"].slice(),
+        bodyChildren:document.body.children.length,
+        confirms:window.__confirmCalls
+      };
+    });
+    assert.deepEqual(after.photos, before.photos, "thumbnail taps must not alter photo state");
+    assert.equal(after.bodyChildren, before.bodyChildren, "the current thumbnail tap must stay inert");
+    assert.equal(after.confirms, 0, "thumbnail taps must not invoke a native dialog");
+  });
+});
+
+test("photo deletion removes exactly the selected image without a native dialog", async function(){
+  /* Three visibly distinct images make an off-by-one splice observable: deleting
+     green must leave red followed by blue, not merely reduce the count. */
+  await withApp(async function(page){
+    await page.addInitScript(function(){
+      window.__confirmCalls = 0;
+      window.confirm = function(){ window.__confirmCalls++; return true; };
+    });
+  }, async function(page){
+    var red = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='red'/%3E%3C/svg%3E";
+    var green = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='green'/%3E%3C/svg%3E";
+    var blue = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Crect width='30' height='20' fill='blue'/%3E%3C/svg%3E";
+    var imported = await page.evaluate(function(photoData){
+      return window.__avl.applyImport(JSON.stringify({
+        visit:{},
+        log:{},
+        rooms:[{id:1,d:{name:"Delete guard"}}],
+        photos:{"1|notes":photoData},
+        skipped:{},
+        ui:{"1|notes":true}
+      }));
+    }, [red, green, blue]);
+    assert.equal(imported, true);
+
+    await page.locator('[data-photos="1|notes"] [data-delph="1"]').click();
+    await page.waitForFunction(function(){
+      return window.__avl.S().photos["1|notes"].length === 2;
+    });
+
+    var result = await page.evaluate(function(){
+      return {
+        photos:window.__avl.S().photos["1|notes"].slice(),
+        rendered:Array.prototype.map.call(
+          document.querySelectorAll('[data-photos="1|notes"] .ph img'),
+          function(img){ return img.getAttribute("src"); }
+        ),
+        confirms:window.__confirmCalls
+      };
+    });
+    assert.deepEqual(result.photos, [red, blue], "deletion must remove green and preserve both neighbours");
+    assert.deepEqual(result.rendered, [red, blue], "the rendered strip must match the saved photo order");
+    assert.equal(result.confirms, 0, "photo deletion must not invoke a native dialog");
+  });
+});
