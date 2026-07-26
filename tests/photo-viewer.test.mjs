@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { launchBrowser, serve } from "./app-test-helpers.mjs";
+import { launchBrowser, serve, surveyStateSnapshot } from "./app-test-helpers.mjs";
 
 var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -48,7 +48,7 @@ async function withViewer(run){
 
 test("viewer navigates within one section and shows the selected stored source uncropped", async function(){
   await withViewer(async function(page){
-    var before = await page.evaluate(function(){ return JSON.stringify(window.__avl.S()); });
+    var before = await surveyStateSnapshot(page);
     var trigger = page.locator('[data-photos="1|notes"] [data-viewph]').nth(1);
     var selectedSource = await trigger.locator("img").getAttribute("src");
     await trigger.click();
@@ -88,7 +88,7 @@ test("viewer navigates within one section and shows the selected stored source u
     assert.equal(await page.locator(".phvimage").getAttribute("src"), photos()[1]);
     assert.equal(await page.locator(".phvtop .phvcount").textContent(), "Photo 2 of 3");
     assert.equal(
-      await page.evaluate(function(){ return JSON.stringify(window.__avl.S()); }),
+      await surveyStateSnapshot(page),
       before,
       "viewing and navigation must leave survey state byte-identical"
     );
