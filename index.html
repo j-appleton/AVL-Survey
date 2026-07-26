@@ -304,7 +304,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.5.0";
+var APP_VERSION = "1.5.1";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -614,6 +614,8 @@ function save(){
    ceiling directly; navigator.storage.estimate() reports a different quota. */
 var LS_CAP = 5 * 1024 * 1024;
 var deviceInfo = {used:0, quota:0, known:false};
+var storagePersistState = "checking";
+var storagePersistRequested = false;
 
 function fmtMB(bytes){
   if(bytes >= 1048576) return (bytes/1048576).toFixed(1) + " MB";
@@ -673,6 +675,17 @@ function storageHTML(){
     h += '<div class="hint" style="margin-top:6px">Device storage used by this app, including the offline copy: ' +
       fmtMB(deviceInfo.used) + '</div>';
   }
+  if(storagePersistState === "granted"){
+    h += '<div class="hint" style="margin-top:6px">Storage retention: browser has agreed to keep this data. Export after every visit.</div>';
+  } else if(storagePersistState === "denied"){
+    h += '<div class="flag" style="margin-top:8px">Storage retention: not guaranteed - the browser may clear this. Export after every visit.</div>';
+  } else if(storagePersistState === "unknown"){
+    h += '<div class="flag" style="margin-top:8px">Storage retention: could not be checked. Export after every visit.</div>';
+  } else if(storagePersistState === "unavailable"){
+    h += '<div class="hint" style="margin-top:6px">Storage retention: not reportable in this browser. Export after every visit.</div>';
+  } else {
+    h += '<div class="hint" style="margin-top:6px">Storage retention: checking...</div>';
+  }
   return h;
 }
 function updateStorageBar(){
@@ -685,6 +698,69 @@ function refreshStorageEstimate(){
     deviceInfo = {used:e.usage || 0, quota:e.quota || 0, known:true};
     updateStorageBar();
   }).catch(function(){});
+}
+
+function settleStoragePersistence(state){
+  storagePersistState = state;
+  updateStorageBar();
+  return state;
+}
+
+function requestStoragePersistence(){
+  var storage = navigator.storage;
+  var hasPersist = !!(storage && typeof storage.persist === "function");
+  if(!hasPersist) return Promise.resolve(settleStoragePersistence("denied"));
+  if(storagePersistRequested) return Promise.resolve(storagePersistState);
+
+  storagePersistRequested = true;
+  var request;
+  try { request = storage.persist(); }
+  catch(error){ return Promise.resolve(settleStoragePersistence("unknown")); }
+
+  return Promise.resolve(request).then(function(granted){
+    return settleStoragePersistence(granted ? "granted" : "denied");
+  }).catch(function(){
+    return settleStoragePersistence("unknown");
+  });
+}
+
+function resolveStoragePersistence(){
+  var storage = navigator.storage;
+  var hasPersisted = !!(storage && typeof storage.persisted === "function");
+  var hasPersist = !!(storage && typeof storage.persist === "function");
+  if(!hasPersisted && !hasPersist){
+    return Promise.resolve(settleStoragePersistence("unavailable"));
+  }
+  if(!hasPersisted) return requestStoragePersistence();
+
+  var query;
+  try { query = storage.persisted(); }
+  catch(error){ return Promise.resolve(settleStoragePersistence("unknown")); }
+
+  return Promise.resolve(query).then(function(granted){
+    if(granted) return settleStoragePersistence("granted");
+    return requestStoragePersistence();
+  }).catch(function(){
+    return settleStoragePersistence("unknown");
+  });
+}
+
+function recheckStoragePersistence(){
+  if(storagePersistState !== "denied") return Promise.resolve(storagePersistState);
+  var storage = navigator.storage;
+  if(!storage || typeof storage.persisted !== "function"){
+    return Promise.resolve(storagePersistState);
+  }
+
+  var query;
+  try { query = storage.persisted(); }
+  catch(error){ return Promise.resolve(settleStoragePersistence("unknown")); }
+
+  return Promise.resolve(query).then(function(granted){
+    return settleStoragePersistence(granted ? "granted" : "denied");
+  }).catch(function(){
+    return settleStoragePersistence("unknown");
+  });
 }
 
 function snapshot(){
@@ -1922,13 +1998,12 @@ load();
 if(S.ui["visit|main"] === undefined) S.ui["visit|main"] = true;
 render();
 refreshStorageEstimate();
-
-/* Ask the browser to reduce eviction risk for this offline field tool. */
-if(navigator.storage && navigator.storage.persist){
-  navigator.storage.persisted().then(function(persisted){
-    if(!persisted) return navigator.storage.persist();
-  }).catch(function(){});
-}
+resolveStoragePersistence();
+document.addEventListener("visibilitychange", function(){
+  if(document.visibilityState === "visible" && storagePersistState === "denied"){
+    recheckStoragePersistence();
+  }
+});
 
 /* ---- offline service worker ---- */
 var swApplyingUpdate = false;
@@ -2084,6 +2159,11 @@ window.__avl = {
   hasSurveyWork:hasSurveyWork,
   storageHTML:storageHTML,
   localBytes:localBytes,
+  storagePersistStatus:function(){
+    return {state:storagePersistState, requested:storagePersistRequested};
+  },
+  resolveStoragePersistence:resolveStoragePersistence,
+  recheckStoragePersistence:recheckStoragePersistence,
   openPhotoViewer:openPhotoViewer,
   closePhotoViewer:closePhotoViewer,
   dataUrlToFile:dataUrlToFile,
