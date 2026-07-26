@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { launchBrowser, serve } from "./app-test-helpers.mjs";
+import { launchBrowser, serve, surveyStateSnapshot } from "./app-test-helpers.mjs";
 
 var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -233,7 +233,7 @@ test("photo thumbnails open the stored image without mutating the survey", async
   }, async function(page){
     await importPhotos(page, "Photo guard");
 
-    var before = await page.evaluate(function(){ return JSON.stringify(window.__avl.S()); });
+    var before = await surveyStateSnapshot(page);
 
     await page.locator('[data-photos="1|notes"] .ph img').nth(1).click();
 
@@ -241,7 +241,6 @@ test("photo thumbnails open the stored image without mutating the survey", async
       var viewer = document.querySelector(".phviewer");
       var image = viewer.querySelector(".phvimage");
       return {
-        state:JSON.stringify(window.__avl.S()),
         dialog:viewer.getAttribute("role"),
         modal:viewer.getAttribute("aria-modal"),
         src:image.getAttribute("src"),
@@ -249,7 +248,7 @@ test("photo thumbnails open the stored image without mutating the survey", async
         confirms:window.__confirmCalls
       };
     });
-    assert.equal(after.state, before, "opening the viewer must not alter survey state");
+    assert.equal(await surveyStateSnapshot(page), before, "opening the viewer must not alter survey state");
     assert.equal(after.dialog, "dialog");
     assert.equal(after.modal, "true");
     assert.equal(after.src, distinctPhotos()[1], "the viewer must use the selected thumbnail's own source");

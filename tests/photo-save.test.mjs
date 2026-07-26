@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { launchBrowser, serve } from "./app-test-helpers.mjs";
+import { launchBrowser, serve, surveyStateSnapshot } from "./app-test-helpers.mjs";
 
 var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 var EXACT_BYTES = [0,1,2,127,128,129,250,251,252,253,254,255,10,13,20,40,80,120,160,200];
@@ -79,15 +79,15 @@ async function openSave(page){
 test("Save photo shares the actual byte-exact File synchronously and never claims success", async function(){
   await withPhotoApp({}, async function(page){
     var save = await openSave(page);
-    var before = await page.evaluate(function(){
+    await page.evaluate(function(){
       window.__shareFetchCalls = 0;
       var originalFetch = window.fetch;
       window.fetch = function(){
         window.__shareFetchCalls++;
         return originalFetch.apply(this, arguments);
       };
-      return JSON.stringify(window.__avl.S());
     });
+    var before = await surveyStateSnapshot(page);
 
     await save.click();
     var shared = await page.evaluate(async function(){
@@ -103,8 +103,7 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
         type:call.file.type,
         size:call.file.size,
         bytes:Array.from(new Uint8Array(await call.file.arrayBuffer())),
-        fetchCalls:window.__shareFetchCalls,
-        state:JSON.stringify(window.__avl.S())
+        fetchCalls:window.__shareFetchCalls
       };
     });
     assert.equal(shared.canCalls, 1);
@@ -117,7 +116,7 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
     assert.equal(shared.size, EXACT_BYTES.length);
     assert.deepEqual(shared.bytes, EXACT_BYTES);
     assert.equal(shared.fetchCalls, 0, "the data URL must be decoded synchronously without fetch()");
-    assert.equal(shared.state, before, "starting a share must not mutate survey state");
+    assert.equal(await surveyStateSnapshot(page), before, "starting a share must not mutate survey state");
     assert.equal(await save.isDisabled(), true, "the in-flight guard must disable repeat taps");
     assert.doesNotMatch(await page.locator(".phviewer").innerText(), /\bSaved\b/i, "in-flight UI must not claim a Photos/Gallery save");
 
@@ -137,11 +136,10 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
     });
     var completed = await page.evaluate(function(){
       return {
-        state:JSON.stringify(window.__avl.S()),
         viewerText:document.querySelector(".phviewer").textContent
       };
     });
-    assert.equal(completed.state, before, "share resolution must not mutate survey state");
+    assert.equal(await surveyStateSnapshot(page), before, "share resolution must not mutate survey state");
     assert.doesNotMatch(completed.viewerText, /\bSaved\b/i, "the browser cannot prove a Photos/Gallery save");
   });
 });
@@ -149,7 +147,7 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
 test("cancelling clears the in-flight guard, stays calm, and permits retry", async function(){
   await withPhotoApp({}, async function(page){
     var save = await openSave(page);
-    var before = await page.evaluate(function(){ return JSON.stringify(window.__avl.S()); });
+    var before = await surveyStateSnapshot(page);
     await save.click();
     await page.evaluate(function(){
       window.__shareCalls[0].reject(new DOMException("User cancelled", "AbortError"));
@@ -161,13 +159,12 @@ test("cancelling clears the in-flight guard, stays calm, and permits retry", asy
 
     var cancelled = await page.evaluate(function(){
       return {
-        state:JSON.stringify(window.__avl.S()),
         status:document.querySelector(".phvstatus").textContent,
         fallbackHidden:document.querySelector("[data-phv-download]").hidden,
         viewerText:document.querySelector(".phviewer").textContent
       };
     });
-    assert.equal(cancelled.state, before);
+    assert.equal(await surveyStateSnapshot(page), before);
     assert.match(cancelled.status, /Share cancelled\. You can try again\./);
     assert.equal(cancelled.fallbackHidden, true, "ordinary cancellation must not be presented as failure");
     assert.doesNotMatch(cancelled.viewerText, /\bSaved\b/i);
@@ -193,7 +190,7 @@ test("unsupported file sharing reveals a byte-exact download fallback without st
       };
     });
     var save = await openSave(page);
-    var before = await page.evaluate(function(){ return JSON.stringify(window.__avl.S()); });
+    var before = await surveyStateSnapshot(page);
     await save.click();
 
     var unsupported = await page.evaluate(function(){
@@ -201,15 +198,14 @@ test("unsupported file sharing reveals a byte-exact download fallback without st
         canCalls:window.__canShareCalls.length,
         shareCalls:window.__shareCalls.length,
         fallbackHidden:document.querySelector("[data-phv-download]").hidden,
-        status:document.querySelector(".phvstatus").textContent,
-        state:JSON.stringify(window.__avl.S())
+        status:document.querySelector(".phvstatus").textContent
       };
     });
     assert.equal(unsupported.canCalls, 1);
     assert.equal(unsupported.shareCalls, 0);
     assert.equal(unsupported.fallbackHidden, false);
     assert.match(unsupported.status, /File sharing is not available/i);
-    assert.equal(unsupported.state, before);
+    assert.equal(await surveyStateSnapshot(page), before);
 
     await page.locator("[data-phv-download]").click();
     var downloaded = await page.evaluate(async function(){
@@ -218,7 +214,6 @@ test("unsupported file sharing reveals a byte-exact download fallback without st
         type:window.__downloadFile.type,
         size:window.__downloadFile.size,
         bytes:Array.from(new Uint8Array(await window.__downloadFile.arrayBuffer())),
-        state:JSON.stringify(window.__avl.S()),
         viewerText:document.querySelector(".phviewer").textContent
       };
     });
@@ -227,7 +222,7 @@ test("unsupported file sharing reveals a byte-exact download fallback without st
     assert.equal(downloaded.type, "image/jpeg");
     assert.equal(downloaded.size, EXACT_BYTES.length);
     assert.deepEqual(downloaded.bytes, EXACT_BYTES);
-    assert.equal(downloaded.state, before);
+    assert.equal(await surveyStateSnapshot(page), before);
     assert.doesNotMatch(downloaded.viewerText, /\bSaved\b/i);
   });
 });
@@ -235,7 +230,7 @@ test("unsupported file sharing reveals a byte-exact download fallback without st
 test("a real share failure clears the guard and exposes the download path", async function(){
   await withPhotoApp({}, async function(page){
     var save = await openSave(page);
-    var before = await page.evaluate(function(){ return JSON.stringify(window.__avl.S()); });
+    var before = await surveyStateSnapshot(page);
     await save.click();
     await page.evaluate(function(){
       window.__shareCalls[0].reject(new DOMException("Not allowed", "NotAllowedError"));
@@ -246,19 +241,18 @@ test("a real share failure clears the guard and exposes the download path", asyn
     var failed = await page.evaluate(function(){
       return {
         enabled:!document.querySelector("[data-phv-save]").disabled,
-        status:document.querySelector(".phvstatus").textContent,
-        state:JSON.stringify(window.__avl.S())
+        status:document.querySelector(".phvstatus").textContent
       };
     });
     assert.equal(failed.enabled, true);
     assert.match(failed.status, /Could not open the share sheet/i);
-    assert.equal(failed.state, before);
+    assert.equal(await surveyStateSnapshot(page), before);
   });
 });
 
 test("Save photo prepares the local File and opens the native share path offline", async function(){
   await withPhotoApp({offline:true}, async function(page){
-    var before = await page.evaluate(function(){ return JSON.stringify(window.__avl.S()); });
+    var before = await surveyStateSnapshot(page);
     var save = await openSave(page);
     await save.click();
     var offline = await page.evaluate(async function(){
@@ -266,14 +260,13 @@ test("Save photo prepares the local File and opens the native share path offline
       return {
         calls:window.__shareCalls.length,
         type:file.type,
-        bytes:Array.from(new Uint8Array(await file.arrayBuffer())),
-        state:JSON.stringify(window.__avl.S())
+        bytes:Array.from(new Uint8Array(await file.arrayBuffer()))
       };
     });
     assert.equal(offline.calls, 1);
     assert.equal(offline.type, "image/jpeg");
     assert.deepEqual(offline.bytes, EXACT_BYTES);
-    assert.equal(offline.state, before);
+    assert.equal(await surveyStateSnapshot(page), before);
     await page.evaluate(function(){ window.__shareCalls[0].resolve(); });
   });
 });

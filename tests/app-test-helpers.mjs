@@ -60,6 +60,14 @@ export function launchBrowser(){
   return chromium.launch({headless:true, executablePath:executablePath});
 }
 
+export async function surveyStateSnapshot(page){
+  return page.evaluate(function(){
+    var state = JSON.parse(JSON.stringify(window.__avl.S()));
+    if(state.meta) delete state.meta.updated;
+    return JSON.stringify(state);
+  });
+}
+
 export async function until(check, timeoutMs, intervalMs){
   var timeout = timeoutMs || 10000;
   var interval = intervalMs || 25;
