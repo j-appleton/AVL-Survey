@@ -161,6 +161,105 @@ test("chips preserve a legacy string when a second option is selected", async fu
   });
 });
 
+test("array-valued chips render, deselect and extend normally", async function(){
+  await withApp(null, async function(page){
+    var imported = await page.evaluate(function(){
+      return window.__avl.applyImport(JSON.stringify({
+        visit:{},
+        log:{},
+        rooms:[{id:1,d:{name:"Array chips",wall:["Drywall","Glass"]}}],
+        photos:{},
+        skipped:{},
+        ui:{"1|dims":true}
+      }));
+    });
+    assert.equal(imported, true);
+
+    var walls = page.locator('[data-scope="1"][data-k="wall"]');
+    assert.equal(
+      await walls.locator('[data-chip][data-v="Drywall"]').getAttribute("aria-pressed"),
+      "true"
+    );
+    assert.equal(
+      await walls.locator('[data-chip][data-v="Glass"]').getAttribute("aria-pressed"),
+      "true"
+    );
+    assert.equal(
+      await walls.locator('[data-chip][data-v="Concrete"]').getAttribute("aria-pressed"),
+      "false"
+    );
+
+    await walls.locator('[data-chip][data-v="Glass"]').click();
+    assert.deepEqual(
+      await page.evaluate(function(){
+        return window.__avl.S().rooms[0].d.wall;
+      }),
+      ["Drywall"]
+    );
+    assert.equal(
+      await walls.locator('[data-chip][data-v="Drywall"]').getAttribute("aria-pressed"),
+      "true"
+    );
+    assert.equal(
+      await walls.locator('[data-chip][data-v="Glass"]').getAttribute("aria-pressed"),
+      "false"
+    );
+
+    await walls.locator('[data-chip][data-v="Concrete"]').click();
+    assert.deepEqual(
+      await page.evaluate(function(){
+        return window.__avl.S().rooms[0].d.wall;
+      }),
+      ["Drywall","Concrete"]
+    );
+  });
+});
+
+test("rendering a legacy chip string leaves the stored value untouched", async function(){
+  await withApp(null, async function(page){
+    var imported = await page.evaluate(function(){
+      return window.__avl.applyImport(JSON.stringify({
+        visit:{},
+        log:{},
+        rooms:[{id:1,d:{name:"Legacy rendering",ctrl:"Touch panel"}}],
+        photos:{},
+        skipped:{},
+        ui:{"1|exist":true,"1|dims":true}
+      }));
+    });
+    assert.equal(imported, true);
+
+    async function storedControl(){
+      return page.evaluate(function(){
+        var value = window.__avl.S().rooms[0].d.ctrl;
+        return {
+          value:value,
+          type:Array.isArray(value) ? "array" : typeof value
+        };
+      });
+    }
+
+    assert.deepEqual(
+      await storedControl(),
+      {value:"Touch panel",type:"string"}
+    );
+
+    await page.locator('[data-skip="1|dims"]').click();
+    assert.deepEqual(
+      await storedControl(),
+      {value:"Touch panel",type:"string"}
+    );
+
+    await page.locator(
+      '[data-scope="1"][data-k="ctrl"] [data-chip][data-v="App / BYOD"]'
+    ).click();
+    assert.deepEqual(
+      await storedControl(),
+      {value:["Touch panel","App / BYOD"],type:"array"}
+    );
+  });
+});
+
 test("the daylight-migration warning fires only when another reading is materially brighter", async function(){
   await withApp(null, async function(page){
     await importRoom(page, {
