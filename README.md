@@ -65,6 +65,8 @@ it works with no signal — the service worker caches everything on first load.
   if a download is ever blocked.
 - Importing over work and clearing a survey create a recoverable snapshot.
   **Restore backup** appears whenever one is available.
+- Tap any photo thumbnail to inspect the full stored survey image without the
+  thumbnail crop, then move through the other photos in that section.
 - **PDF** builds a print report — use *Share → Print → pinch out → Save as PDF*.
 
 ### Ambient light
@@ -90,7 +92,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v2";   // was v1
+var CACHE = "avl-survey-v4";   // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -117,6 +119,8 @@ The browser suites start the app on localhost and verify:
 - storage warnings measure the localStorage limit that photos actually consume
 - photo controls remain valid siblings, only one delete can be armed at a time,
   and a second tap removes exactly the selected image
+- the full-screen viewer uses the selected stored image uncropped, stays inside
+  its section, cancels armed deletion, and restores scroll position and focus
 - the ambient-light and DISCAS calculations retain their domain thresholds
 - the installed app reloads offline with survey data intact
 - a new service worker waits for **Update**, **Later** preserves the open session,
