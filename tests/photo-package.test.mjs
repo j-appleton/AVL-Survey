@@ -58,13 +58,22 @@ async function withPackageApp(options, run){
       window.__packageCanCalls = [];
       window.__packageShareCalls = [];
       window.__packageShareSupported = config.supported;
+      /* Queued from inside canShare, which the app calls synchronously in the
+         tap. It can only run once that handler returns, so if the count has
+         moved by the time share() is reached, a microtask checkpoint passed in
+         between and the call has left the user's original task -- which is what
+         costs iOS Safari its transient activation. This catches an async hop
+         hidden inside a helper, where inspecting one function's source cannot. */
+      window.__packageMicrotasks = 0;
       Object.defineProperty(navigator, "canShare", {
         configurable:true,
         value:function(data){
           window.__packageCanCalls.push({
             file:data.files && data.files[0],
+            microtasks:window.__packageMicrotasks,
             active:navigator.userActivation ? navigator.userActivation.isActive : null
           });
+          Promise.resolve().then(function(){ window.__packageMicrotasks++; });
           return window.__packageShareSupported;
         }
       });
@@ -73,6 +82,7 @@ async function withPackageApp(options, run){
         value:function(data){
           var call = {
             file:data.files && data.files[0],
+            microtasks:window.__packageMicrotasks,
             active:navigator.userActivation ? navigator.userActivation.isActive : null
           };
           window.__packageShareCalls.push(call);
@@ -259,6 +269,8 @@ test("Share package uses the actual prepared File synchronously, blocks overlap 
         sameFile:window.__packageCanCalls[0].file === window.__packageShareCalls[0].file,
         canActive:window.__packageCanCalls[0].active,
         shareActive:window.__packageShareCalls[0].active,
+        canMicrotasks:window.__packageCanCalls[0].microtasks,
+        shareMicrotasks:window.__packageShareCalls[0].microtasks,
         samePrepared:window.__packageShareCalls[0].file === window.__avl.photoPackageFile(),
         type:window.__packageShareCalls[0].file.type,
         name:window.__packageShareCalls[0].file.name,
@@ -271,6 +283,10 @@ test("Share package uses the actual prepared File synchronously, blocks overlap 
     assert.equal(first.sameFile,true,"canShare must receive the exact File passed to share");
     assert.equal(first.canActive,true);
     assert.equal(first.shareActive,true,"share must remain in the trusted tap");
+    assert.equal(
+      first.shareMicrotasks,first.canMicrotasks,
+      "no microtask checkpoint may pass between canShare and navigator.share"
+    );
     assert.equal(first.samePrepared,true);
     assert.equal(first.type,"application/zip");
     assert.match(first.name,/-package\.zip$/);
@@ -426,6 +442,61 @@ test("same-length replacement and identity changes make a package neither sharea
       assert.equal(await page.evaluate(function(){ return window.__packageShareCalls.length; }),0);
     });
   }
+});
+
+/* Typing calls setV and updateProgress but never render(), so the package block
+   keeps both buttons enabled while its identity has already moved. Every other
+   stale test reaches the stale state through share() first, which replaces the
+   package object and makes the download guard unreachable. */
+test("a package that is still marked ready but no longer current cannot be downloaded", async function(){
+  await withPackageApp({}, async function(page){
+    await page.evaluate(function(){
+      window.__packageRevoked = [];
+      window.__packageAnchorClicks = [];
+      URL.createObjectURL = function(){ return "blob:ready-but-stale"; };
+      URL.revokeObjectURL = function(url){ window.__packageRevoked.push(url); };
+      HTMLAnchorElement.prototype.click = function(){
+        window.__packageAnchorClicks.push(this.download);
+      };
+    });
+    await prepare(page);
+
+    /* one legitimate download first, so an object URL exists to be revoked */
+    await page.locator("#pkgdownload").click();
+    assert.equal(
+      (await page.evaluate(function(){ return window.__packageAnchorClicks.slice(); })).length,
+      1
+    );
+
+    var edited = await page.evaluate(function(){
+      var field = document.querySelector('[data-scope="visit"][data-k="client"]');
+      field.value = "Renamed mid-visit";
+      field.dispatchEvent(new Event("input",{bubbles:true}));
+      return {
+        client:window.__avl.S().visit.client,
+        status:window.__avl.photoPackageStatus().status,
+        downloadDisabled:document.querySelector("#photopackagewrap .pkgtools .ghost").disabled
+      };
+    });
+    assert.equal(edited.client,"Renamed mid-visit");
+    assert.equal(edited.status,"ready","typing must not re-render the package block");
+    assert.equal(edited.downloadDisabled,false,"the stale package is still tappable");
+
+    var result = await page.evaluate(function(){
+      return {
+        returned:window.__avl.downloadPreparedPackage(),
+        status:window.__avl.photoPackageStatus().status,
+        clicks:window.__packageAnchorClicks.slice(),
+        revoked:window.__packageRevoked.slice(),
+        text:document.querySelector("#photopackagewrap").textContent
+      };
+    });
+    assert.equal(result.returned,false,"download must refuse a package that is no longer current");
+    assert.equal(result.clicks.length,1,"no second download anchor may be clicked");
+    assert.equal(result.status,"stale");
+    assert.deepEqual(result.revoked,["blob:ready-but-stale"]);
+    assert.match(result.text,/Photos changed since preparation\. Prepare again\./);
+  });
 });
 
 test("identity moving after photo reads is discarded by the post-preparation re-check", async function(){
