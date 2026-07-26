@@ -19,7 +19,7 @@
   --bg:#f6f7f9; --card:#ffffff; --ink:#111827; --muted:#6b7280; --line:#e2e5ea;
   --accent:#2563eb; --accent-soft:#eff4ff;
   --ok:#0f7b4f; --ok-bg:#e7f5ee; --warn:#b45309; --warn-bg:#fdf3e3; --na:#6b7280; --na-bg:#eef0f3;
-  --danger:#b42318;
+  --danger:#b42318; --danger-fill:#b42318;
   --radius:12px;
 }
 @media (prefers-color-scheme: dark){
@@ -27,7 +27,7 @@
     --bg:#0f1115; --card:#171a21; --ink:#e8eaee; --muted:#9aa1ad; --line:#2a2f3a;
     --accent:#5b8cff; --accent-soft:#1b2436;
     --ok:#4ade80; --ok-bg:#12291d; --warn:#fbbf24; --warn-bg:#2c2210; --na:#9aa1ad; --na-bg:#20242c;
-    --danger:#f87171;
+    --danger:#f87171; --danger-fill:#b91c1c;
   }
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -116,12 +116,16 @@ button.btn:active{transform:translateY(1px)}
 
 /* photos */
 .photos{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-.ph{position:relative;width:76px;height:76px;border-radius:9px;overflow:hidden;border:1px solid var(--line)}
+.photoitem{position:relative;width:76px;height:76px;flex:0 0 76px}
+.ph{width:76px;height:76px;border-radius:9px;overflow:hidden;border:1px solid var(--line)}
 .ph img{width:100%;height:100%;object-fit:cover;display:block}
-.ph button{
-  position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:99px;border:0;
-  background:rgba(0,0,0,.62);color:#fff;font-size:13px;line-height:1;cursor:pointer;padding:0
+.phdel{
+  position:absolute;top:2px;right:2px;z-index:2;width:22px;height:22px;border-radius:99px;border:0;
+  background:rgba(0,0,0,.62);color:#fff;font:inherit;font-size:13px;font-weight:600;line-height:1;cursor:pointer;padding:0;
+  white-space:nowrap
 }
+.phdel[data-armed="1"]{width:56px;padding:0 8px;background:var(--danger-fill);font-size:11px}
+.phdel:focus{outline:2px solid var(--accent);outline-offset:2px}
 .addph{
   width:76px;height:76px;border:1.5px dashed var(--line);border-radius:9px;background:none;
   color:var(--muted);font-size:11px;cursor:pointer;display:flex;flex-direction:column;
@@ -258,7 +262,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.2.0";
+var APP_VERSION = "1.2.1";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -671,6 +675,38 @@ function armConfirm(btn, label, fn){
   }, 3500);
 }
 
+/* Photo delete is a compact icon control, so it needs a visual and accessible
+   armed state rather than armConfirm()'s long text replacement. Only one photo
+   delete may be armed at a time; a render naturally clears every armed state. */
+function resetPhotoDelete(btn){
+  if(!btn) return;
+  if(btn._photoDeleteTimer){
+    clearTimeout(btn._photoDeleteTimer);
+    btn._photoDeleteTimer = null;
+  }
+  btn.removeAttribute("data-armed");
+  btn.textContent = "\u00d7";
+  var label = btn.getAttribute("data-delete-label");
+  if(label) btn.setAttribute("aria-label", label);
+}
+function armPhotoDelete(btn, fn){
+  if(btn.getAttribute("data-armed") === "1"){
+    resetPhotoDelete(btn);
+    fn();
+    return;
+  }
+  Array.prototype.forEach.call(document.querySelectorAll(".phdel[data-armed='1']"), function(other){
+    if(other !== btn) resetPhotoDelete(other);
+  });
+  var label = btn.getAttribute("data-delete-label") || "Delete photo";
+  btn.setAttribute("data-armed","1");
+  btn.textContent = "Delete?";
+  btn.setAttribute("aria-label", "Tap again to " + label.replace(/^Delete /, "delete "));
+  btn._photoDeleteTimer = setTimeout(function(){
+    if(btn.parentNode) resetPhotoDelete(btn);
+  }, 3500);
+}
+
 /* Escape hatch when downloads are blocked by the viewer */
 function showRaw(text, title){
   var w = document.createElement("div");
@@ -782,7 +818,11 @@ function photosHTML(key){
   var list = S.photos[key] || [];
   return '<div class="f"><span class="flab">Photos</span><div class="photos" data-photos="'+esc(key)+'">' +
     list.map(function(p,i){
-      return '<div class="ph"><img src="'+p+'" alt=""><button type="button" data-delph="'+i+'">&times;</button></div>';
+      var label = "Delete photo " + (i + 1) + " of " + list.length;
+      return '<div class="photoitem" data-photo-key="'+esc(key)+'" data-photo-index="'+i+'">' +
+        '<div class="ph"><img src="'+p+'" alt=""></div>' +
+        '<button type="button" class="phdel" data-delph="'+i+'" data-delete-label="'+label+'" aria-label="'+label+'">&times;</button>' +
+        '</div>';
     }).join("") +
     '<button type="button" class="addph" data-addph="'+esc(key)+'"><span>+</span><span>Photo</span></button>' +
     '</div></div>';
@@ -1123,8 +1163,16 @@ document.addEventListener("click", function(e){
   if(t.hasAttribute && t.hasAttribute("data-delph")){
     var strip = t.closest("[data-photos]");
     var pk = strip.getAttribute("data-photos");
-    S.photos[pk].splice(parseInt(t.getAttribute("data-delph"),10), 1);
-    save(); render();
+    armPhotoDelete(t, function(){
+      var list = S.photos[pk] || [];
+      var index = parseInt(t.getAttribute("data-delph"),10);
+      if(isNaN(index) || index < 0 || index >= list.length){
+        render();
+        return;
+      }
+      list.splice(index, 1);
+      save(); render();
+    });
     return;
   }
 
