@@ -1,7 +1,8 @@
 # AVL Site Survey — install guide
 
 A pre-install AV site survey app. Runs entirely in the browser, works offline,
-stores everything on your phone. No accounts, no backend, no data leaves the device.
+stores everything on your phone. No accounts or backend; data leaves the device
+only when you explicitly export or share it.
 
 ## Why it needs hosting
 
@@ -67,6 +68,16 @@ it works with no signal — the service worker caches everything on first load.
   **Restore backup** appears whenever one is available.
 - Tap any photo thumbnail to inspect the full stored survey image without the
   thumbnail crop, then move through the other photos in that section.
+- After capture, the new survey copy opens immediately. Tap **Save photo…** to
+  open the device share sheet, then choose **Save Image** on iPhone or
+  **Photos / Gallery** on Android. The browser cannot verify which destination
+  you chose, so the app never claims that the image was saved.
+- The saved/shareable survey copy is the same compressed image held by the app:
+  JPEG, maximum 900px on its longest edge, with camera metadata removed. If file
+  sharing is unavailable or fails, **Download image** appears as a fallback.
+- A new capture is persisted before its viewer opens. If survey storage rejects
+  it, the viewer says so while the in-memory image is still available to share,
+  instead of hiding the failure behind a generic toast.
 - **PDF** builds a print report — use *Share → Print → pinch out → Save as PDF*.
 
 ### Ambient light
@@ -92,7 +103,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v4";   // bump this for every runtime change
+var CACHE = "avl-survey-v5";   // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -121,6 +132,13 @@ The browser suites start the app on localhost and verify:
   and a second tap removes exactly the selected image
 - the full-screen viewer uses the selected stored image uncropped, stays inside
   its section, cancels armed deletion, and restores scroll position and focus
+- Save photo passes the actual byte-exact `File` to `canShare()` and `share()`
+  within the trusted tap, blocks overlapping calls, treats cancellation calmly,
+  never mutates survey state, and never reports an unverifiable save
+- unsupported or failed file sharing exposes a byte-exact download fallback,
+  while successful capture opens the stored survey copy and its manual save action
+- capture persistence completes before the viewer opens; a simulated
+  storage-full failure remains visible and shareable for the current session
 - the ambient-light and DISCAS calculations retain their domain thresholds
 - the installed app reloads offline with survey data intact
 - a new service worker waits for **Update**, **Later** preserves the open session,
@@ -133,6 +151,19 @@ npm ci
 npx playwright install chromium
 npm test
 ```
+
+### Required phone checks before releasing photo save
+
+Browser automation cannot inspect the native share sheet or the Photos/Gallery
+destination. Keep photo save in draft until all of these pass on installed PWAs:
+
+- iPhone: capture, tap **Save photo…**, choose **Save Image**, then verify the
+  photo, dimensions, and portrait/landscape orientation in Photos
+- Android: capture, tap **Save photo…**, choose Google Photos or the device
+  Gallery, then verify the photo, dimensions, and portrait/landscape orientation
+- cancel on each platform and retry without reloading the app
+- repeat in airplane mode, with repeated captures, and from the viewer after
+  fully closing and reopening the app
 
 GitHub Actions runs the same test for pull requests and pushes to `main`.
 
