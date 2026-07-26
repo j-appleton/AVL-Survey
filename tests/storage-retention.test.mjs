@@ -266,3 +266,41 @@ test("a denied session re-queries on refocus but never requests persistence twic
     );
   });
 });
+
+test("persistence is requested once across boot, refocus, and explicit resolution", async function(){
+  await withStorageApp({persisted:"false",persist:"false"}, async function(page){
+    var denied = await settledResult(page);
+    assert.deepEqual(denied.status, {state:"denied",requested:true});
+    assert.deepEqual(denied.calls, {persisted:1,persist:1});
+
+    await page.evaluate(function(){
+      Object.defineProperty(document, "visibilityState", {
+        configurable:true,
+        get:function(){ return "visible"; }
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.waitForFunction(function(){
+      return window.__storagePersistCalls.persisted === 4;
+    });
+    await page.evaluate(function(){
+      return window.__avl.resolveStoragePersistence();
+    });
+
+    assert.deepEqual(
+      await page.evaluate(function(){
+        return {
+          status:window.__avl.storagePersistStatus(),
+          calls:window.__storagePersistCalls
+        };
+      }),
+      {
+        status:{state:"denied",requested:true},
+        calls:{persisted:5,persist:1}
+      },
+      "persist() must be called once per session even when persistence is re-checked"
+    );
+  });
+});
