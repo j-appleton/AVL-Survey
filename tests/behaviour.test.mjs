@@ -131,6 +131,36 @@ test("storage warnings use localStorage rather than origin-wide estimates", asyn
   });
 });
 
+test("chips preserve a legacy string when a second option is selected", async function(){
+  await withApp(null, async function(page){
+    var imported = await page.evaluate(function(){
+      return window.__avl.applyImport(JSON.stringify({
+        visit:{},
+        log:{},
+        rooms:[{id:1,d:{name:"Legacy control",ctrl:"Touch panel"}}],
+        photos:{},
+        skipped:{},
+        ui:{"1|exist":true}
+      }));
+    });
+    assert.equal(imported, true);
+
+    var control = page.locator('[data-scope="1"][data-k="ctrl"]');
+    assert.equal(
+      await control.locator('[data-chip][data-v="Touch panel"]').getAttribute("aria-pressed"),
+      "true",
+      "the existing string must render as selected"
+    );
+
+    await control.locator('[data-chip][data-v="App / BYOD"]').click();
+    assert.deepEqual(
+      await page.evaluate(function(){ return window.__avl.S().rooms[0].d.ctrl; }),
+      ["Touch panel","App / BYOD"],
+      "the first chip tap must preserve and normalize the existing answer"
+    );
+  });
+});
+
 test("the daylight-migration warning fires only when another reading is materially brighter", async function(){
   await withApp(null, async function(page){
     await importRoom(page, {
