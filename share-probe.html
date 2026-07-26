@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Web Share type probe</title>
+<title>Web Share probe</title>
 <style>
 :root{ --bg:#f6f7f9; --card:#fff; --ink:#111827; --muted:#6b7280; --line:#e2e5ea;
-       --accent:#2563eb; --ok:#0f7b4f; --okbg:#e7f5ee; --bad:#b42318; --badbg:#fdecea; }
+       --accent:#2563eb; --ok:#0f7b4f; --bad:#b42318; }
 @media (prefers-color-scheme:dark){
   :root{ --bg:#0f1115; --card:#171a21; --ink:#e8eaee; --muted:#9aa1ad; --line:#2a2f3a;
-         --accent:#5b8cff; --ok:#4ade80; --okbg:#12291d; --bad:#fca5a5; --badbg:#2a1416; }
+         --accent:#5b8cff; --ok:#4ade80; --bad:#fca5a5; }
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--bg);color:var(--ink);
@@ -17,205 +17,288 @@ body{margin:0;background:var(--bg);color:var(--ink);
   padding:18px 14px calc(24px + env(safe-area-inset-bottom))}
 .wrap{max-width:560px;margin:0 auto}
 h1{font-size:19px;margin:0 0 4px}
-p.sub{font-size:13px;color:var(--muted);margin:0 0 16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
-.row{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
-.row:last-child{border-bottom:0}
-.row .k{flex:1;color:var(--muted)}
-.row .v{font-weight:700;font-variant-numeric:tabular-nums}
-.yes{color:var(--ok)} .no{color:var(--bad)}
+p.sub{font-size:13px;color:var(--muted);margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:0 0 12px}
+.k{color:var(--muted);font-size:14px}
 button{font:inherit;width:100%;cursor:pointer;border-radius:11px;border:1px solid var(--accent);
-  background:var(--accent);color:#fff;padding:14px;font-size:16px;font-weight:700;margin:0 0 10px}
+  background:var(--accent);color:#fff;padding:14px;font-size:16px;font-weight:700;margin:0 0 9px;
+  -webkit-appearance:none;appearance:none;touch-action:manipulation}
 button.alt{background:var(--card);color:var(--ink);border-color:var(--line)}
-button[disabled]{opacity:.45}
-.note{font-size:13px;padding:11px 12px;border-radius:10px;margin:0 0 10px;line-height:1.45}
-.note.ok{background:var(--okbg);color:var(--ok)}
-.note.bad{background:var(--badbg);color:var(--bad)}
-.note.info{background:var(--card);border:1px solid var(--line);color:var(--muted)}
-code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}
+button.sm{padding:11px;font-size:14px;margin:0}
+.grid{display:flex;gap:8px;margin-top:10px}
+.log{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;
+  word-break:break-word;background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:12px;margin:0 0 12px;min-height:70px}
+.log b{color:var(--bad)}
+.log i{color:var(--ok);font-style:normal}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Web Share type probe</h1>
-  <p class="sub">Does this browser accept a ZIP through the native share sheet? Nothing here is saved or uploaded.</p>
+  <h1>Web Share probe</h1>
+  <p class="sub">Every step reports below, including failures. Nothing is uploaded.</p>
 
-  <div class="card" id="facts"></div>
+  <div class="log" id="log">script did not run</div>
 
-  <button id="shareZip">Share the test ZIP&hellip;</button>
-  <button id="shareJpg" class="alt">Share a test JPEG&hellip; (control)</button>
-  <button id="dl" class="alt">Download the test ZIP instead</button>
+  <div class="card">
+    <span class="k">Build a package, then share it</span>
+    <div class="grid">
+      <button class="alt sm" id="b20">20 photos</button>
+      <button class="alt sm" id="b60">60 photos</button>
+      <button class="alt sm" id="b100">100 photos</button>
+    </div>
+  </div>
 
-  <div id="out"></div>
-
-  <p class="sub" style="margin-top:14px">
-    The ZIP holds two named JPEGs and a manifest, built the same way the survey
-    app would build it. If the share sheet opens, pick Google Drive and confirm the
-    file lands. A closed sheet proves only that it closed &mdash; not that anything saved.
-  </p>
+  <button id="share">Share the package&hellip;</button>
+  <button id="dl" class="alt">Download the package instead</button>
+  <button id="checks" class="alt">Re-run capability checks</button>
 </div>
 
 <script>
-(function(){
-  "use strict";
+/* Failures must be visible on the phone. This block comes before everything. */
+var LOG = document.getElementById("log");
+var lines = [];
+function put(text, kind){
+  var tag = kind === "err" ? "b" : (kind === "ok" ? "i" : "span");
+  lines.push("<" + tag + ">" +
+    String(text).replace(/&/g,"&amp;").replace(/</g,"&lt;") + "</" + tag + ">");
+  if(lines.length > 44) lines.shift();
+  LOG.innerHTML = lines.join("\n");
+}
+window.onerror = function(message, src, line, col){
+  put("UNCAUGHT: " + message + "  (line " + line + ":" + col + ")", "err");
+  return false;
+};
+put("script running");
 
-  /* ---------- store-only ZIP writer, ES5, no dependency ---------- */
-  var CRC = (function(){
-    var t = new Uint32Array(256), c, n, k;
-    for(n=0;n<256;n++){ c=n; for(k=0;k<8;k++){ c = (c&1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1); } t[n]=c>>>0; }
-    return t;
-  })();
-  function crc32(b){
-    var c = 0xFFFFFFFF;
-    for(var i=0;i<b.length;i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c>>>8);
-    return (c ^ 0xFFFFFFFF) >>> 0;
-  }
-  function utf8(s){
-    var o = unescape(encodeURIComponent(String(s))), b = new Uint8Array(o.length);
-    for(var i=0;i<o.length;i++) b[i] = o.charCodeAt(i);
-    return b;
-  }
-  function w16(a,o,v){ a[o]=v&255; a[o+1]=(v>>>8)&255; }
-  function w32(a,o,v){ a[o]=v&255; a[o+1]=(v>>>8)&255; a[o+2]=(v>>>16)&255; a[o+3]=(v>>>24)&255; }
+/* Handlers are wired before any real work and each is guarded on its own, so a
+   single failure can never take the other buttons down with it. */
+function on(id, label, fn){
+  var el = document.getElementById(id);
+  if(!el){ put("MISSING BUTTON: " + id, "err"); return; }
+  el.addEventListener("click", function(){
+    try { fn(el); }
+    catch(e){ put("ERROR in " + label + ": " + (e && e.message ? e.message : e), "err"); }
+  }, false);
+}
 
-  function zipStore(entries){
-    var parts=[], central=[], offset=0, i;
-    for(i=0;i<entries.length;i++){
-      var name=utf8(entries[i].name), data=entries[i].bytes, crc=crc32(data);
-      var lh=new Uint8Array(30+name.length);
-      w32(lh,0,0x04034b50); w16(lh,4,20); w16(lh,6,0x0800); w16(lh,8,0);
-      w16(lh,10,0); w16(lh,12,0x21);
-      w32(lh,14,crc); w32(lh,18,data.length); w32(lh,22,data.length);
-      w16(lh,26,name.length); w16(lh,28,0); lh.set(name,30);
-      parts.push(lh, data);
-      var ch=new Uint8Array(46+name.length);
-      w32(ch,0,0x02014b50); w16(ch,4,20); w16(ch,6,20); w16(ch,8,0x0800); w16(ch,10,0);
-      w16(ch,12,0); w16(ch,14,0x21);
-      w32(ch,16,crc); w32(ch,20,data.length); w32(ch,24,data.length);
-      w16(ch,28,name.length); w16(ch,30,0); w16(ch,32,0); w16(ch,34,0); w16(ch,36,0);
-      w32(ch,38,0); w32(ch,42,offset); ch.set(name,46);
-      central.push(ch);
-      offset += lh.length + data.length;
-    }
-    var cd=0; for(i=0;i<central.length;i++) cd += central[i].length;
-    var end=new Uint8Array(22);
-    w32(end,0,0x06054b50); w16(end,4,0); w16(end,6,0);
-    w16(end,8,entries.length); w16(end,10,entries.length);
-    w32(end,12,cd); w32(end,16,offset); w16(end,20,0);
-    return new Blob(parts.concat(central).concat([end]), {type:"application/zip"});
-  }
+var pkg = null;
+var building = false;
 
-  /* ---------- a small real JPEG, drawn locally ---------- */
-  function testJpegBytes(){
-    var c=document.createElement("canvas"); c.width=600; c.height=450;
-    var g=c.getContext("2d");
-    var gr=g.createLinearGradient(0,0,600,450);
-    gr.addColorStop(0,"#2563eb"); gr.addColorStop(1,"#0f7b4f");
-    g.fillStyle=gr; g.fillRect(0,0,600,450);
-    g.fillStyle="#fff"; g.font="bold 34px -apple-system,Helvetica,Arial";
-    g.fillText("AVL test photo", 40, 240);
-    var url=c.toDataURL("image/jpeg",0.62);
-    var bin=atob(url.slice(url.indexOf(",")+1));
-    var b=new Uint8Array(bin.length);
-    for(var i=0;i<bin.length;i++) b[i]=bin.charCodeAt(i);
-    return b;
-  }
+on("b20",    "build 20",  function(){ build(20); });
+on("b60",    "build 60",  function(){ build(60); });
+on("b100",   "build 100", function(){ build(100); });
+on("share",  "share",     function(el){ doShare(el); });
+on("dl",     "download",  function(){ doDownload(); });
+on("checks", "checks",    function(){ runChecks(); });
+put("buttons wired", "ok");
 
-  var jpgBytes = testJpegBytes();
-  var zipBlob = zipStore([
-    {name:"photos/001_SITE_logistics.jpg", bytes:jpgBytes},
-    {name:"photos/002_R01_display.jpg",    bytes:jpgBytes},
-    {name:"photo-manifest.csv",            bytes:utf8("ref,filename\n001,001_SITE_logistics.jpg\n002,002_R01_display.jpg\n")}
-  ]);
+function fmt(n){
+  if(n < 1024) return n + " B";
+  if(n < 1048576) return Math.round(n / 1024) + " KB";
+  return (Math.round(n / 104857.6) / 10) + " MB";
+}
+function utf8(s){
+  var o = unescape(encodeURIComponent(String(s))), b = new Uint8Array(o.length), i;
+  for(i=0;i<o.length;i++) b[i] = o.charCodeAt(i);
+  return b;
+}
+function pad(n){ var o = String(n); while(o.length < 3) o = "0" + o; return o; }
+function can(data){
+  try { return !!(navigator.canShare && navigator.canShare(data)); }
+  catch(e){ put("canShare threw: " + (e && e.message ? e.message : e), "err"); return false; }
+}
 
-  var zipFile = new File([zipBlob], "avl-survey-test-package.zip", {type:"application/zip"});
-  var jpgFile = new File([jpgBytes], "001_SITE_logistics.jpg", {type:"image/jpeg"});
-
-  function can(data){
-    try { return !!(navigator.canShare && navigator.canShare(data)); }
-    catch(e){ return false; }
-  }
-
-  var zipData = {files:[zipFile], title:"AVL survey package"};
-  var jpgData = {files:[jpgFile], title:"AVL survey photo"};
-  var bigData = null;
-  (function(){
-    var many=[], i;
-    for(i=0;i<60;i++) many.push(new File([jpgBytes], "photo-"+(i+1)+".jpg", {type:"image/jpeg"}));
-    bigData = {files:many, title:"60 photos"};
-  })();
-
-  var facts = [
-    ["navigator.share present",   typeof navigator.share === "function"],
-    ["navigator.canShare present",typeof navigator.canShare === "function"],
-    ["Secure context",            window.isSecureContext === true],
-    ["canShare 1 ZIP",            can(zipData)],
-    ["canShare 1 JPEG",           can(jpgData)],
-    ["canShare 60 JPEGs",         can(bigData)]
-  ];
-
-  var html = "";
-  for(var i=0;i<facts.length;i++){
-    html += '<div class="row"><span class="k">'+facts[i][0]+'</span>'+
-            '<span class="v '+(facts[i][1]?"yes":"no")+'">'+(facts[i][1]?"yes":"no")+'</span></div>';
-  }
-  html += '<div class="row"><span class="k">ZIP size</span><span class="v">'+zipBlob.size+' bytes</span></div>';
-  html += '<div class="row"><span class="k">Entries</span><span class="v">3</span></div>';
-  document.getElementById("facts").innerHTML = html;
-
-  var out = document.getElementById("out");
-  function say(cls, text){ out.innerHTML = '<div class="note '+cls+'">'+text+'</div>'; }
-
-  if(!can(zipData)){
-    say("bad", "This browser reports it cannot share a ZIP. Compare it against the JPEG row above &mdash; if JPEG is yes and ZIP is no, the archive path needs the download fallback.");
-  }
-
-  function attempt(btn, data, label){
-    btn.addEventListener("click", function(){
-      if(!can(data)){
-        say("bad", "canShare said no for "+label+". Not attempting a share that the browser has already refused.");
-        return;
-      }
-      var busy = btn.textContent;
-      btn.disabled = true; btn.textContent = "Opening share sheet…";
-      var result;
-      /* No await above this call: the share must stay in the original tap. */
-      try { result = navigator.share(data); }
-      catch(e){
-        btn.disabled = false; btn.textContent = busy;
-        say("bad", "share() threw immediately: "+(e && e.name ? e.name : "error")+".");
-        return;
-      }
-      Promise.resolve(result).then(function(){
-        btn.disabled = false; btn.textContent = busy;
-        say("ok", "Share sheet closed for "+label+". That only means the sheet closed &mdash; check Google Drive to see whether anything actually landed.");
-      })["catch"](function(e){
-        btn.disabled = false; btn.textContent = busy;
-        var n = e && e.name ? e.name : "error";
-        say(n === "AbortError" ? "info" : "bad",
-          n === "AbortError"
-            ? "Share cancelled for "+label+". Nothing was sent. You can try again."
-            : "Share failed for "+label+": "+n+". This is the case the download fallback exists for.");
-      });
-    });
-  }
-
-  attempt(document.getElementById("shareZip"), zipData, "the ZIP");
-  attempt(document.getElementById("shareJpg"), jpgData, "the JPEG");
-
-  document.getElementById("dl").addEventListener("click", function(){
-    try {
-      var url = URL.createObjectURL(zipFile);
-      var a = document.createElement("a");
-      a.href = url; a.download = zipFile.name; a.rel = "noopener";
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(function(){ URL.revokeObjectURL(url); }, 30000);
-      say("info", "Download started. On iPhone it usually lands in Files &rarr; Downloads, from which Drive is two taps away. This is the fallback path.");
-    } catch(e){
-      say("bad", "Download was blocked here.");
-    }
-  });
+/* ---------- store-only ZIP writer, ES5, no dependency ---------- */
+var CRC = (function(){
+  var t = new Uint32Array(256), c, n, k;
+  for(n=0;n<256;n++){ c = n; for(k=0;k<8;k++){ c = (c & 1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1); } t[n] = c>>>0; }
+  return t;
 })();
+function crc32(b){
+  var c = 0xFFFFFFFF, i;
+  for(i=0;i<b.length;i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c>>>8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function w16(a,o,v){ a[o] = v & 255; a[o+1] = (v>>>8) & 255; }
+function w32(a,o,v){ a[o] = v & 255; a[o+1] = (v>>>8) & 255; a[o+2] = (v>>>16) & 255; a[o+3] = (v>>>24) & 255; }
+function zipStore(entries){
+  var parts = [], central = [], offset = 0, i;
+  for(i=0;i<entries.length;i++){
+    var name = utf8(entries[i].name), data = entries[i].bytes, crc = crc32(data);
+    var lh = new Uint8Array(30 + name.length);
+    w32(lh,0,0x04034b50); w16(lh,4,20); w16(lh,6,0x0800); w16(lh,8,0);
+    w16(lh,10,0); w16(lh,12,0x21);
+    w32(lh,14,crc); w32(lh,18,data.length); w32(lh,22,data.length);
+    w16(lh,26,name.length); w16(lh,28,0); lh.set(name,30);
+    parts.push(lh, data);
+    var ch = new Uint8Array(46 + name.length);
+    w32(ch,0,0x02014b50); w16(ch,4,20); w16(ch,6,20); w16(ch,8,0x0800); w16(ch,10,0);
+    w16(ch,12,0); w16(ch,14,0x21);
+    w32(ch,16,crc); w32(ch,20,data.length); w32(ch,24,data.length);
+    w16(ch,28,name.length); w16(ch,30,0); w16(ch,32,0); w16(ch,34,0); w16(ch,36,0);
+    w32(ch,38,0); w32(ch,42,offset); ch.set(name,46);
+    central.push(ch);
+    offset += lh.length + data.length;
+  }
+  var cd = 0;
+  for(i=0;i<central.length;i++) cd += central[i].length;
+  var end = new Uint8Array(22);
+  w32(end,0,0x06054b50); w16(end,4,0); w16(end,6,0);
+  w16(end,8,entries.length); w16(end,10,entries.length);
+  w32(end,12,cd); w32(end,16,offset); w16(end,20,0);
+  return new Blob(parts.concat(central).concat([end]), {type:"application/zip"});
+}
+
+/* ---------- photos: plain 2D drawing only ----------
+   Deliberately no ImageData, no ctx.filter, and no canvas drawn onto itself.
+   Random rectangles give the JPEG encoder plenty of edges, which is what makes
+   the byte sizes representative of real site photos. */
+var rngState = 12345;
+function rnd(){
+  rngState = (rngState * 1103515245 + 12345) & 0x7FFFFFFF;
+  return rngState / 0x7FFFFFFF;
+}
+function photoBytes(seed, dense){
+  var c = document.createElement("canvas");
+  c.width = 900; c.height = 675;
+  var g = c.getContext("2d");
+  rngState = (seed * 7919 + 13) & 0x7FFFFFFF;
+  var gr = g.createLinearGradient(0,0,900,675);
+  gr.addColorStop(0,"#e3e7ee"); gr.addColorStop(1,"#8d97a6");
+  g.fillStyle = gr; g.fillRect(0,0,900,675);
+  var count = dense ? 2600 : 260, i;
+  for(i=0;i<count;i++){
+    g.fillStyle = "rgb(" + ((rnd()*255)|0) + "," + ((rnd()*255)|0) + "," + ((rnd()*255)|0) + ")";
+    g.fillRect((rnd()*900)|0, (rnd()*675)|0, 4 + ((rnd()*26)|0), 3 + ((rnd()*18)|0));
+  }
+  var url = c.toDataURL("image/jpeg", 0.62);
+  var bin = atob(url.slice(url.indexOf(",") + 1));
+  var b = new Uint8Array(bin.length), j;
+  for(j=0;j<bin.length;j++) b[j] = bin.charCodeAt(j);
+  return b;
+}
+
+/* ---------- build, chunked so the phone can paint between batches ---------- */
+function build(n){
+  if(building){ put("already building"); return; }
+  building = true;
+  pkg = null;
+  lines = [];
+  put("building " + n + " photos at 900px q0.62");
+  var entries = [], i = 0, started = (new Date()).getTime();
+
+  function step(){
+    try {
+      var end = i + 4;
+      if(end > n) end = n;
+      for(; i < end; i++){
+        entries.push({
+          name: "photos/" + pad(i + 1) + "_R01_existing-equipment.jpg",
+          bytes: photoBytes(i + 1, i % 3 === 0)
+        });
+      }
+      if(i < n){
+        if(i % 20 === 0) put("  " + i + " / " + n);
+        setTimeout(step, 0);
+        return;
+      }
+      var photoMs = (new Date()).getTime() - started;
+      entries.push({name:"photo-manifest.csv", bytes:utf8("ref,filename\n001,001_R01_existing-equipment.jpg\n")});
+      entries.push({name:"survey-export.json", bytes:utf8('{"app":"avl-survey","schema":2,"data":{}}')});
+      var zipStart = (new Date()).getTime();
+      var blob = zipStore(entries);
+      var zipMs = (new Date()).getTime() - zipStart;
+      pkg = new File([blob], "avl-survey-" + n + "-photos.zip", {type:"application/zip"});
+      building = false;
+      put("photos built in " + photoMs + " ms");
+      put("zipped in " + zipMs + " ms");
+      put("package: " + fmt(blob.size) + " across " + entries.length + " entries", "ok");
+      var ok = can({files:[pkg]});
+      put("canShare this package: " + (ok ? "YES" : "NO"), ok ? "ok" : "err");
+      if(!ok) put("Use Download instead, then move it to Drive from Files.");
+    } catch(e){
+      building = false;
+      put("BUILD FAILED at photo " + (i + 1) + ": " + (e && e.message ? e.message : e), "err");
+    }
+  }
+  setTimeout(step, 0);
+}
+
+function doShare(btn){
+  if(!pkg){ put("build a package first", "err"); return; }
+  var data = {files:[pkg], title:"AVL survey package"};
+  if(!can(data)){ put("canShare says no. Not attempting a share it already refused.", "err"); return; }
+  var label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Opening share sheet…";
+  put("calling navigator.share with " + fmt(pkg.size));
+  var result;
+  /* Nothing is awaited above this call. */
+  try { result = navigator.share(data); }
+  catch(e){
+    btn.disabled = false; btn.textContent = label;
+    put("share() threw: " + (e && e.name ? e.name : "error") + " " + (e && e.message ? e.message : ""), "err");
+    return;
+  }
+  Promise.resolve(result).then(function(){
+    btn.disabled = false; btn.textContent = label;
+    put("share sheet closed — that is ALL this proves. Check Drive for the file and its size.", "ok");
+  })["catch"](function(e){
+    btn.disabled = false; btn.textContent = label;
+    var nm = e && e.name ? e.name : "error";
+    if(nm === "AbortError") put("cancelled, nothing sent, retry is fine");
+    else put("share failed: " + nm + " " + (e && e.message ? e.message : ""), "err");
+  });
+}
+
+function doDownload(){
+  if(!pkg){ put("build a package first", "err"); return; }
+  var url = URL.createObjectURL(pkg);
+  var a = document.createElement("a");
+  a.href = url; a.download = pkg.name; a.rel = "noopener";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 30000);
+  put("download started — look in Files, then Downloads", "ok");
+}
+
+function runChecks(){
+  lines = [];
+  var hasShare = typeof navigator.share === "function";
+  var hasCan = typeof navigator.canShare === "function";
+  put("navigator.share:    " + (hasShare ? "present" : "ABSENT"), hasShare ? "ok" : "err");
+  put("navigator.canShare: " + (hasCan ? "present" : "ABSENT"), hasCan ? "ok" : "err");
+  put("secure context:     " + (window.isSecureContext ? "yes" : "NO — share cannot work"),
+      window.isSecureContext ? "ok" : "err");
+  try {
+    var tiny = new File([utf8("hello")], "t.txt", {type:"text/plain"});
+    put("File constructor:   ok (" + tiny.size + " B)", "ok");
+  } catch(e){
+    put("File constructor FAILED: " + (e && e.message ? e.message : e), "err");
+    return;
+  }
+  try {
+    var z = zipStore([{name:"a.txt", bytes:utf8("hi")}]);
+    var zf = new File([z], "toy.zip", {type:"application/zip"});
+    var zok = can({files:[zf]});
+    put("toy zip:            " + z.size + " B");
+    put("canShare toy zip:   " + (zok ? "YES" : "NO"), zok ? "ok" : "err");
+  } catch(e){
+    put("zip build FAILED: " + (e && e.message ? e.message : e), "err");
+  }
+  try {
+    var b = photoBytes(1, false);
+    var jf = new File([b], "p.jpg", {type:"image/jpeg"});
+    var jok = can({files:[jf]});
+    put("canvas JPEG:        " + b.length + " B", "ok");
+    put("canShare one JPEG:  " + (jok ? "YES" : "NO"), jok ? "ok" : "err");
+  } catch(e){
+    put("canvas JPEG FAILED: " + (e && e.message ? e.message : e), "err");
+  }
+}
+
+try { runChecks(); }
+catch(e){ put("checks threw: " + (e && e.message ? e.message : e), "err"); }
+put("ready — tap a photo count above", "ok");
 </script>
 </body>
 </html>
