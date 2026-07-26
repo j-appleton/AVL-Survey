@@ -1,10 +1,11 @@
 /* AVL Site Survey — offline service worker.
    Bump CACHE when you change any app file; old caches are purged on activate. */
-var CACHE = "avl-survey-v5";
+var CACHE = "avl-survey-v6";
 
 var ASSETS = [
   "./",
   "./index.html",
+  "./photo-store.js",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

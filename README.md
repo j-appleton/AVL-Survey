@@ -21,8 +21,9 @@ GitHub Pages is free and takes about five minutes.
    - Set it to **Public** (Pages requires this on free accounts)
    - Tick **Add a README file**, then **Create repository**
 2. In the new repo click **Add file** → **Upload files**.
-3. Upload **all seven files** from this bundle:
+3. Upload **all eight files** from this bundle:
    - `index.html`
+   - `photo-store.js`
    - `sw.js`
    - `manifest.webmanifest`
    - `icon-192.png`
@@ -103,7 +104,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v5";   // bump this for every runtime change
+var CACHE = "avl-survey-v6";   // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -116,7 +117,7 @@ from v1 to v2 may therefore require fully closing and reopening the installed
 app once. Updates after v2 use the in-app notice.
 
 The PWA still has no build step. `package.json`, `tests/`, and `.github/` support
-automated testing only and are not required when uploading the seven runtime
+automated testing only and are not required when uploading the eight runtime
 files from an iPhone.
 
 ## Tests
@@ -139,6 +140,8 @@ The browser suites start the app on localhost and verify:
   while successful capture opens the stored survey copy and its manual save action
 - capture persistence completes before the viewer opens; a simulated
   storage-full failure remains visible and shareable for the current session
+- new captures are mirrored byte-exactly to IndexedDB under unique stable IDs,
+  while schema v2 stays authoritative if the new store is unavailable
 - the ambient-light and DISCAS calculations retain their domain thresholds
 - the installed app reloads offline with survey data intact
 - a new service worker waits for **Update**, **Later** preserves the open session,
@@ -177,4 +180,11 @@ import or clear. Individual photo deletion requires two taps but is not
 recoverable. Unreadable stored data is retained separately for recovery. The
 Data & storage card measures usage against the approximately 5 MB localStorage
 ceiling, warns at 60%, and escalates at 85%. This makes the current photo limit
-visible; moving photos to IndexedDB is still the next storage task.
+visible.
+
+Version 1.5 begins the photo-storage transition by also writing each newly
+captured, compressed photo to IndexedDB with a stable ID. Schema v2, exports,
+backups, the viewer, sharing, printing, deletion, and the storage meter still
+use the localStorage data URL. The duplicate write is deliberately temporary:
+it proves the new store on real surveys before any read path or migration
+depends on it.
