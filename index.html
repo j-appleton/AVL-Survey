@@ -1004,6 +1004,11 @@ function photoManifest(){
   /* Canonical order: site, declared room sections, future room buckets, then
      anything else. Object insertion order is deliberately never load-bearing. */
   addBucket("log|main", null, 0);
+  keys.filter(function(key){
+    return !consumed[key] && String(key).indexOf("log|") === 0;
+  }).sort().forEach(function(key){
+    addBucket(key, null, 0);
+  });
   S.rooms.forEach(function(room, roomIndex){
     ROOM_SECTIONS.forEach(function(section){
       addBucket(String(room.id) + "|" + section.id, room, roomIndex + 1);

@@ -106,6 +106,117 @@ test("photo manifest follows canonical order and never drops unknown buckets", a
   });
 });
 
+test("site-level buckets stay with site logistics, ahead of every room", async function(){
+  await withApp(async function(page){
+    await importState(page, {
+      visit:{site:"Site-bucket order"},
+      log:{},
+      rooms:[{id:1,d:{name:"Room after site"}}],
+      /* Reversed deliberately: neither insertion order nor lexical order is
+         the package order. Site stays together before the first room. */
+      photos:{
+        "1|disp":[JPG],
+        "log|walk:dock":[JPG],
+        "log|walk:approach":[JPG],
+        "log|main":[JPG]
+      },
+      skipped:{},
+      ui:{}
+    });
+
+    var manifest = await page.evaluate(function(){
+      return window.__avl.photoManifest();
+    });
+    assert.deepEqual(
+      manifest.map(function(entry){ return entry.key; }),
+      ["log|main","log|walk:approach","log|walk:dock","1|disp"]
+    );
+    assert.deepEqual(
+      manifest.map(function(entry){ return entry.filename; }),
+      [
+        "001_SITE_logistics.jpg",
+        "002_SITE_walk-approach.jpg",
+        "003_SITE_walk-dock.jpg",
+        "004_R01_display.jpg"
+      ]
+    );
+  });
+});
+
+test("leftover room buckets sort within their room rather than by insertion", async function(){
+  await withApp(async function(page){
+    await importState(page, {
+      visit:{},
+      log:{},
+      rooms:[{id:1,d:{name:"Walk order"}}],
+      photos:{
+        "1|walk:stage":[JPG],
+        "1|walk:entrance":[JPG],
+        "1|walk:dock":[JPG],
+        "1|disp":[JPG]
+      },
+      skipped:{},
+      ui:{}
+    });
+
+    var manifest = await page.evaluate(function(){
+      return window.__avl.photoManifest();
+    });
+    assert.deepEqual(
+      manifest.map(function(entry){ return entry.key; }),
+      ["1|disp","1|walk:dock","1|walk:entrance","1|walk:stage"]
+    );
+    assert.deepEqual(
+      manifest.map(function(entry){ return entry.ref; }),
+      ["001","002","003","004"]
+    );
+  });
+});
+
+test("roomName carries the site for site buckets and the room name for rooms", async function(){
+  await withApp(async function(page){
+    await importState(page, {
+      visit:{site:"Downtown Convention Center"},
+      log:{},
+      rooms:[{id:4,d:{name:"Grand Ballroom"}}],
+      photos:{
+        "4|audio":[JPG],
+        "log|walk:dock":[JPG],
+        "log|main":[JPG]
+      },
+      skipped:{},
+      ui:{}
+    });
+
+    var identity = await page.evaluate(function(){
+      return window.__avl.photoManifest().map(function(entry){
+        return {
+          key:entry.key,
+          roomLabel:entry.roomLabel,
+          roomName:entry.roomName
+        };
+      });
+    });
+    assert.deepEqual(identity, [
+      {
+        key:"log|main",
+        roomLabel:"SITE",
+        roomName:"Downtown Convention Center"
+      },
+      {
+        key:"log|walk:dock",
+        roomLabel:"SITE",
+        roomName:"Downtown Convention Center"
+      },
+      {
+        key:"4|audio",
+        roomLabel:"R01",
+        roomName:"Grand Ballroom"
+      }
+    ]);
+  });
+});
+
 test("photo manifest uses MIME extensions and frozen section labels without mutating state", async function(){
   await withApp(async function(page){
     await importState(page, {
