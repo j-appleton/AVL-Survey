@@ -87,6 +87,43 @@ test("photo IDs use UUIDs with a timestamp-counter fallback and conservative syn
   });
 });
 
+test("the photo store rejects duplicate IDs instead of overwriting a record", async function(){
+  await withPhotoStoreApp({}, async function(page){
+    var result = await page.evaluate(async function(){
+      var first = window.AVLPhotoStore.recordFromDataUrl(
+        "data:image/jpeg;base64,AAECAwQ=",
+        5,
+        7
+      );
+      await window.AVLPhotoStore.addRecord(first);
+
+      var rejection = null;
+      try {
+        await window.AVLPhotoStore.addRecord(first);
+      } catch(error){
+        rejection = {
+          name:error && error.name,
+          message:error && error.message
+        };
+      }
+
+      var records = await window.AVLPhotoStore.all();
+      return {
+        rejection:rejection,
+        count:records.length,
+        id:records[0] && records[0].id,
+        bytes:records[0] && Array.from(new Uint8Array(await records[0].blob.arrayBuffer()))
+      };
+    });
+
+    assert.ok(result.rejection, "adding an existing ID must reject");
+    assert.equal(result.rejection.name, "ConstraintError");
+    assert.equal(result.count, 1);
+    assert.equal(typeof result.id, "string");
+    assert.deepEqual(result.bytes, [0,1,2,3,4]);
+  });
+});
+
 test("new captures dual-write exact blobs with stable IDs while schema-v2 reads stay local", async function(){
   await withPhotoStoreApp({}, async function(page){
     var imported = await page.evaluate(function(){
