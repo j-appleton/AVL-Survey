@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Web Share type probe</title>
+<style>
+:root{ --bg:#f6f7f9; --card:#fff; --ink:#111827; --muted:#6b7280; --line:#e2e5ea;
+       --accent:#2563eb; --ok:#0f7b4f; --okbg:#e7f5ee; --bad:#b42318; --badbg:#fdecea; }
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#0f1115; --card:#171a21; --ink:#e8eaee; --muted:#9aa1ad; --line:#2a2f3a;
+         --accent:#5b8cff; --ok:#4ade80; --okbg:#12291d; --bad:#fca5a5; --badbg:#2a1416; }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  padding:18px 14px calc(24px + env(safe-area-inset-bottom))}
+.wrap{max-width:560px;margin:0 auto}
+h1{font-size:19px;margin:0 0 4px}
+p.sub{font-size:13px;color:var(--muted);margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
+.row{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+.row:last-child{border-bottom:0}
+.row .k{flex:1;color:var(--muted)}
+.row .v{font-weight:700;font-variant-numeric:tabular-nums}
+.yes{color:var(--ok)} .no{color:var(--bad)}
+button{font:inherit;width:100%;cursor:pointer;border-radius:11px;border:1px solid var(--accent);
+  background:var(--accent);color:#fff;padding:14px;font-size:16px;font-weight:700;margin:0 0 10px}
+button.alt{background:var(--card);color:var(--ink);border-color:var(--line)}
+button[disabled]{opacity:.45}
+.note{font-size:13px;padding:11px 12px;border-radius:10px;margin:0 0 10px;line-height:1.45}
+.note.ok{background:var(--okbg);color:var(--ok)}
+.note.bad{background:var(--badbg);color:var(--bad)}
+.note.info{background:var(--card);border:1px solid var(--line);color:var(--muted)}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Web Share type probe</h1>
+  <p class="sub">Does this browser accept a ZIP through the native share sheet? Nothing here is saved or uploaded.</p>
+
+  <div class="card" id="facts"></div>
+
+  <button id="shareZip">Share the test ZIP&hellip;</button>
+  <button id="shareJpg" class="alt">Share a test JPEG&hellip; (control)</button>
+  <button id="dl" class="alt">Download the test ZIP instead</button>
+
+  <div id="out"></div>
+
+  <p class="sub" style="margin-top:14px">
+    The ZIP holds two named JPEGs and a manifest, built the same way the survey
+    app would build it. If the share sheet opens, pick Google Drive and confirm the
+    file lands. A closed sheet proves only that it closed &mdash; not that anything saved.
+  </p>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- store-only ZIP writer, ES5, no dependency ---------- */
+  var CRC = (function(){
+    var t = new Uint32Array(256), c, n, k;
+    for(n=0;n<256;n++){ c=n; for(k=0;k<8;k++){ c = (c&1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1); } t[n]=c>>>0; }
+    return t;
+  })();
+  function crc32(b){
+    var c = 0xFFFFFFFF;
+    for(var i=0;i<b.length;i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c>>>8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function utf8(s){
+    var o = unescape(encodeURIComponent(String(s))), b = new Uint8Array(o.length);
+    for(var i=0;i<o.length;i++) b[i] = o.charCodeAt(i);
+    return b;
+  }
+  function w16(a,o,v){ a[o]=v&255; a[o+1]=(v>>>8)&255; }
+  function w32(a,o,v){ a[o]=v&255; a[o+1]=(v>>>8)&255; a[o+2]=(v>>>16)&255; a[o+3]=(v>>>24)&255; }
+
+  function zipStore(entries){
+    var parts=[], central=[], offset=0, i;
+    for(i=0;i<entries.length;i++){
+      var name=utf8(entries[i].name), data=entries[i].bytes, crc=crc32(data);
+      var lh=new Uint8Array(30+name.length);
+      w32(lh,0,0x04034b50); w16(lh,4,20); w16(lh,6,0x0800); w16(lh,8,0);
+      w16(lh,10,0); w16(lh,12,0x21);
+      w32(lh,14,crc); w32(lh,18,data.length); w32(lh,22,data.length);
+      w16(lh,26,name.length); w16(lh,28,0); lh.set(name,30);
+      parts.push(lh, data);
+      var ch=new Uint8Array(46+name.length);
+      w32(ch,0,0x02014b50); w16(ch,4,20); w16(ch,6,20); w16(ch,8,0x0800); w16(ch,10,0);
+      w16(ch,12,0); w16(ch,14,0x21);
+      w32(ch,16,crc); w32(ch,20,data.length); w32(ch,24,data.length);
+      w16(ch,28,name.length); w16(ch,30,0); w16(ch,32,0); w16(ch,34,0); w16(ch,36,0);
+      w32(ch,38,0); w32(ch,42,offset); ch.set(name,46);
+      central.push(ch);
+      offset += lh.length + data.length;
+    }
+    var cd=0; for(i=0;i<central.length;i++) cd += central[i].length;
+    var end=new Uint8Array(22);
+    w32(end,0,0x06054b50); w16(end,4,0); w16(end,6,0);
+    w16(end,8,entries.length); w16(end,10,entries.length);
+    w32(end,12,cd); w32(end,16,offset); w16(end,20,0);
+    return new Blob(parts.concat(central).concat([end]), {type:"application/zip"});
+  }
+
+  /* ---------- a small real JPEG, drawn locally ---------- */
+  function testJpegBytes(){
+    var c=document.createElement("canvas"); c.width=600; c.height=450;
+    var g=c.getContext("2d");
+    var gr=g.createLinearGradient(0,0,600,450);
+    gr.addColorStop(0,"#2563eb"); gr.addColorStop(1,"#0f7b4f");
+    g.fillStyle=gr; g.fillRect(0,0,600,450);
+    g.fillStyle="#fff"; g.font="bold 34px -apple-system,Helvetica,Arial";
+    g.fillText("AVL test photo", 40, 240);
+    var url=c.toDataURL("image/jpeg",0.62);
+    var bin=atob(url.slice(url.indexOf(",")+1));
+    var b=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) b[i]=bin.charCodeAt(i);
+    return b;
+  }
+
+  var jpgBytes = testJpegBytes();
+  var zipBlob = zipStore([
+    {name:"photos/001_SITE_logistics.jpg", bytes:jpgBytes},
+    {name:"photos/002_R01_display.jpg",    bytes:jpgBytes},
+    {name:"photo-manifest.csv",            bytes:utf8("ref,filename\n001,001_SITE_logistics.jpg\n002,002_R01_display.jpg\n")}
+  ]);
+
+  var zipFile = new File([zipBlob], "avl-survey-test-package.zip", {type:"application/zip"});
+  var jpgFile = new File([jpgBytes], "001_SITE_logistics.jpg", {type:"image/jpeg"});
+
+  function can(data){
+    try { return !!(navigator.canShare && navigator.canShare(data)); }
+    catch(e){ return false; }
+  }
+
+  var zipData = {files:[zipFile], title:"AVL survey package"};
+  var jpgData = {files:[jpgFile], title:"AVL survey photo"};
+  var bigData = null;
+  (function(){
+    var many=[], i;
+    for(i=0;i<60;i++) many.push(new File([jpgBytes], "photo-"+(i+1)+".jpg", {type:"image/jpeg"}));
+    bigData = {files:many, title:"60 photos"};
+  })();
+
+  var facts = [
+    ["navigator.share present",   typeof navigator.share === "function"],
+    ["navigator.canShare present",typeof navigator.canShare === "function"],
+    ["Secure context",            window.isSecureContext === true],
+    ["canShare 1 ZIP",            can(zipData)],
+    ["canShare 1 JPEG",           can(jpgData)],
+    ["canShare 60 JPEGs",         can(bigData)]
+  ];
+
+  var html = "";
+  for(var i=0;i<facts.length;i++){
+    html += '<div class="row"><span class="k">'+facts[i][0]+'</span>'+
+            '<span class="v '+(facts[i][1]?"yes":"no")+'">'+(facts[i][1]?"yes":"no")+'</span></div>';
+  }
+  html += '<div class="row"><span class="k">ZIP size</span><span class="v">'+zipBlob.size+' bytes</span></div>';
+  html += '<div class="row"><span class="k">Entries</span><span class="v">3</span></div>';
+  document.getElementById("facts").innerHTML = html;
+
+  var out = document.getElementById("out");
+  function say(cls, text){ out.innerHTML = '<div class="note '+cls+'">'+text+'</div>'; }
+
+  if(!can(zipData)){
+    say("bad", "This browser reports it cannot share a ZIP. Compare it against the JPEG row above &mdash; if JPEG is yes and ZIP is no, the archive path needs the download fallback.");
+  }
+
+  function attempt(btn, data, label){
+    btn.addEventListener("click", function(){
+      if(!can(data)){
+        say("bad", "canShare said no for "+label+". Not attempting a share that the browser has already refused.");
+        return;
+      }
+      var busy = btn.textContent;
+      btn.disabled = true; btn.textContent = "Opening share sheet…";
+      var result;
+      /* No await above this call: the share must stay in the original tap. */
+      try { result = navigator.share(data); }
+      catch(e){
+        btn.disabled = false; btn.textContent = busy;
+        say("bad", "share() threw immediately: "+(e && e.name ? e.name : "error")+".");
+        return;
+      }
+      Promise.resolve(result).then(function(){
+        btn.disabled = false; btn.textContent = busy;
+        say("ok", "Share sheet closed for "+label+". That only means the sheet closed &mdash; check Google Drive to see whether anything actually landed.");
+      })["catch"](function(e){
+        btn.disabled = false; btn.textContent = busy;
+        var n = e && e.name ? e.name : "error";
+        say(n === "AbortError" ? "info" : "bad",
+          n === "AbortError"
+            ? "Share cancelled for "+label+". Nothing was sent. You can try again."
+            : "Share failed for "+label+": "+n+". This is the case the download fallback exists for.");
+      });
+    });
+  }
+
+  attempt(document.getElementById("shareZip"), zipData, "the ZIP");
+  attempt(document.getElementById("shareJpg"), jpgData, "the JPEG");
+
+  document.getElementById("dl").addEventListener("click", function(){
+    try {
+      var url = URL.createObjectURL(zipFile);
+      var a = document.createElement("a");
+      a.href = url; a.download = zipFile.name; a.rel = "noopener";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 30000);
+      say("info", "Download started. On iPhone it usually lands in Files &rarr; Downloads, from which Drive is two taps away. This is the fallback path.");
+    } catch(e){
+      say("bad", "Download was blocked here.");
+    }
+  });
+})();
+</script>
+</body>
+</html>
