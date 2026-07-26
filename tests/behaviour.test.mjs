@@ -106,3 +106,96 @@ test("storage warnings use localStorage rather than origin-wide estimates", asyn
     assert.match(storageText, /Over \d+% of the survey storage limit/i);
   });
 });
+
+test("the daylight-migration warning fires only when another reading is materially brighter", async function(){
+  await withApp(null, async function(page){
+    await importRoom(page, {
+      name:"Daylight migration",
+      lux_disp:"100",
+      lux_rear:"1200",
+      disptype:"Direct-view (LCD / LED)"
+    });
+    var migrating = await page.locator('[data-calc="1"]').innerText();
+    assert.match(migrating, /Room reads up to 1200 lux elsewhere/i);
+    assert.match(migrating, /re-check at the worst hour/i);
+  });
+
+  /* The threshold is >1.8x AND >150 lux. 200 vs 100 clears the ratio but not
+     the absolute gap, so a room that is merely a little uneven must stay quiet
+     -- otherwise the warning becomes noise and gets ignored. */
+  await withApp(null, async function(page){
+    await importRoom(page, {
+      name:"Evenly lit",
+      lux_disp:"100",
+      lux_rear:"200",
+      disptype:"Direct-view (LCD / LED)"
+    });
+    var even = await page.locator('[data-calc="1"]').innerText();
+    assert.doesNotMatch(even, /lux elsewhere/i);
+  });
+});
+
+test("the two direct-view brightness warnings stay mutually exclusive", async function(){
+  /* These are an if / else-if pair. Collapsing them into two independent ifs
+     emits both at once, which reads as contradictory advice. Each case asserts
+     the sibling is absent, not just that the right one is present. */
+  await withApp(null, async function(page){
+    await importRoom(page, {
+      name:"Washout",
+      lux_disp:"1200",
+      disptype:"Direct-view (LCD / LED)"
+    });
+    var washout = await page.locator('[data-calc="1"]').innerText();
+    assert.match(washout, /Over 1000 lux/i);
+    assert.match(washout, /wash out/i);
+    assert.doesNotMatch(washout, /rated 700 nits or better/i);
+  });
+
+  await withApp(null, async function(page){
+    await importRoom(page, {
+      name:"Bright but usable",
+      lux_disp:"800",
+      disptype:"Direct-view (LCD / LED)"
+    });
+    var bright = await page.locator('[data-calc="1"]').innerText();
+    assert.match(bright, /rated 700 nits or better/i);
+    assert.doesNotMatch(bright, /Over 1000 lux/i);
+  });
+});
+
+test("destructive actions need two taps and never use a native dialog", async function(){
+  /* confirm() is blocked in sandboxed viewers and silently returns false, which
+     makes destructive buttons look dead. armConfirm() arms on the first tap and
+     acts on the second. The confirm stub records any regression to the native
+     dialog even when the two-tap assertions would otherwise still pass. */
+  await withApp(async function(page){
+    await page.addInitScript(function(){
+      window.__confirmCalls = 0;
+      window.confirm = function(){ window.__confirmCalls++; return true; };
+    });
+  }, async function(page){
+    await importRoom(page, {name:"Doomed room"});
+
+    var deleteButton = page.locator('[data-delroom="1"]');
+    await deleteButton.click();
+    var afterFirstTap = await page.evaluate(function(){
+      return {
+        rooms:window.__avl.S().rooms.length,
+        label:document.querySelector('[data-delroom="1"]').textContent,
+        confirms:window.__confirmCalls
+      };
+    });
+    assert.equal(afterFirstTap.rooms, 1, "one tap must not delete anything");
+    assert.match(afterFirstTap.label, /tap again/i, "the button must arm visibly");
+    assert.equal(afterFirstTap.confirms, 0, "no native dialog may be used");
+
+    await page.locator('[data-delroom="1"]').click();
+    await page.waitForFunction(function(){ return window.__avl.S().rooms.length === 0; });
+
+    assert.equal(
+      await page.evaluate(function(){ return window.__confirmCalls; }),
+      0,
+      "no native dialog may be used"
+    );
+  });
+});
