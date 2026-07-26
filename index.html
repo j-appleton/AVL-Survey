@@ -281,6 +281,7 @@ button.btn:active{transform:translateY(1px)}
 <input type="file" id="filein" accept="image/*" capture="environment" multiple hidden>
 <input type="file" id="jsonin" accept="application/json,.json" hidden>
 
+<script src="./photo-store.js"></script>
 <script>
 "use strict";
 
@@ -303,7 +304,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.4.1";
+var APP_VERSION = "1.5.0";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -1649,6 +1650,56 @@ document.addEventListener("click", function(e){
    PHOTOS
    ============================================================ */
 var photoTarget = null;
+var photoStoreWrites = [];
+var photoStoreLastError = "";
+var photoStoreWarned = false;
+
+function mirrorPhotoToIndexedDB(dataUrl, dimensions){
+  var write;
+  try {
+    if(!window.AVLPhotoStore || typeof window.AVLPhotoStore.addDataUrl !== "function"){
+      throw new Error("Photo store module is unavailable");
+    }
+    write = window.AVLPhotoStore.addDataUrl(
+      dataUrl,
+      dimensions && dimensions.width,
+      dimensions && dimensions.height
+    );
+  } catch(error){
+    write = Promise.reject(error);
+  }
+
+  var tracked = Promise.resolve(write).then(function(record){
+    return record;
+  }).catch(function(error){
+    photoStoreLastError = error && error.message ? error.message : "Photo storage failed";
+    if(!photoStoreWarned){
+      photoStoreWarned = true;
+      toast("Additional photo storage unavailable — export this survey after the visit");
+    }
+    return null;
+  });
+  photoStoreWrites.push(tracked);
+  tracked.then(function(){
+    var index = photoStoreWrites.indexOf(tracked);
+    if(index > -1) photoStoreWrites.splice(index,1);
+  });
+  return tracked;
+}
+
+function photoStoreIdle(){
+  var pending = photoStoreWrites.slice();
+  if(!pending.length) return Promise.resolve();
+  return Promise.all(pending).then(photoStoreIdle);
+}
+
+function photoStoreStatus(){
+  return {
+    pending:photoStoreWrites.length,
+    lastError:photoStoreLastError
+  };
+}
+
 function pickPhoto(key){
   photoTarget = key;
   var inp = document.getElementById("filein");
@@ -1663,11 +1714,12 @@ document.getElementById("filein").addEventListener("change", function(e){
   var firstAdded = -1;
   var added = 0;
   files.forEach(function(file){
-    compress(file, function(dataUrl){
+    compress(file, function(dataUrl, dimensions){
       if(dataUrl){
         if(!S.photos[key]) S.photos[key] = [];
         if(firstAdded < 0) firstAdded = S.photos[key].length;
         S.photos[key].push(dataUrl);
+        mirrorPhotoToIndexedDB(dataUrl, dimensions);
         added++;
       }
       if(--pending === 0){
@@ -1701,7 +1753,9 @@ function compress(file, cb){
       c.width = Math.round(img.width * scale);
       c.height = Math.round(img.height * scale);
       c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      try { cb(c.toDataURL("image/jpeg", 0.62)); } catch(err){ cb(null); }
+      try {
+        cb(c.toDataURL("image/jpeg", 0.62), {width:c.width, height:c.height});
+      } catch(err){ cb(null); }
     };
     img.onerror = function(){ cb(null); };
     img.src = reader.result;
@@ -2035,6 +2089,8 @@ window.__avl = {
   dataUrlToFile:dataUrlToFile,
   sharePhoto:sharePhoto,
   downloadPhoto:downloadPhoto,
+  photoStoreIdle:photoStoreIdle,
+  photoStoreStatus:photoStoreStatus,
   persistSurvey:persistSurvey,
   raw:function(){ return store.get(KEY); },
   backupRaw:function(){ return store.get(BACKUP_KEY); },
