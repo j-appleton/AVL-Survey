@@ -304,7 +304,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.5.1";
+var APP_VERSION = "1.5.2";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -1238,6 +1238,11 @@ function answered(v){
   if(Array.isArray(v)) return v.length > 0;
   return String(v).trim() !== "";
 }
+/* A select converted to chips can still hold one legacy string. Rendering and
+   the first tap must agree so that answer is visible and never discarded. */
+function chipValues(v){
+  return Array.isArray(v) ? v : (answered(v) ? [String(v)] : []);
+}
 
 /* ============================================================
    FIELD RENDERING
@@ -1281,7 +1286,7 @@ function fieldHTML(scope, f){
       '</div>';
   }
   else if(f.t === "chips"){
-    var arr = Array.isArray(v) ? v : [];
+    var arr = chipValues(v);
     body = '<div class="chips" '+da+'>' + f.o.map(function(o){
       return '<button type="button" data-chip data-v="'+esc(o)+'" aria-pressed="'+(arr.indexOf(o) > -1)+'">'+esc(o)+'</button>';
     }).join("") + '</div>';
@@ -1627,7 +1632,7 @@ document.addEventListener("click", function(e){
   if(t.hasAttribute && t.hasAttribute("data-chip")){
     var w2 = t.parentNode;
     var sc2 = w2.getAttribute("data-scope"), k2 = w2.getAttribute("data-k");
-    var arr = getV(sc2,k2); if(!Array.isArray(arr)) arr = [];
+    var arr = chipValues(getV(sc2,k2));
     var v2 = t.getAttribute("data-v");
     var i = arr.indexOf(v2);
     if(i > -1) arr.splice(i,1); else arr.push(v2);
