@@ -79,6 +79,13 @@ it works with no signal — the service worker caches everything on first load.
 - A new capture is persisted before its viewer opens. If survey storage rejects
   it, the viewer says so while the in-memory image is still available to share,
   instead of hiding the failure behind a generic toast.
+- At the end of a visit, open **Data & storage** and choose
+  **Prepare photo package**. The app builds one ZIP containing every stored
+  survey photo under its handoff filename, a versioned survey JSON export, and
+  an Excel-friendly photo manifest. **Share package…** opens the device share
+  sheet for Google Drive; **Download package instead** is always available.
+  The app cannot verify either destination, so it tells you to confirm the file
+  in Drive or Files and never claims that it was uploaded or saved.
 - **PDF** builds a print report — use *Share → Print → pinch out → Save as PDF*.
 
 ### Ambient light
@@ -104,7 +111,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v9";   // bump this for every runtime change
+var CACHE = "avl-survey-v10";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -145,6 +152,15 @@ The browser suites start the app on localhost and verify:
 - the derived photo manifest includes every photo exactly once in stable site,
   room, section, and bucket order; filenames use global references, visible room
   positions, frozen section slugs, and the source image MIME
+- the prepared photo ZIP extracts with an independent system reader, preserves
+  every source byte and manifest filename in canonical order, carries a
+  re-importable survey export, and writes RFC-compatible CSV with a UTF-8 BOM
+- package sharing passes the exact prepared ZIP to `canShare()` and `share()`
+  inside the trusted tap, blocks overlaps, permits cancellation and retry, and
+  never mutates the survey or makes an unverifiable success claim
+- exact package staleness checks cover survey identity, room names, manifest
+  ordering, and same-length photo replacements before both share and download;
+  state changes during preparation discard the package
 - storage retention reports whether the browser actually granted persistence,
   without changing the localStorage meter or treating the result as a backup
 - the ambient-light and DISCAS calculations retain their domain thresholds
@@ -160,7 +176,7 @@ npx playwright install chromium
 npm test
 ```
 
-### Required phone checks before releasing photo save
+### Required phone checks
 
 Browser automation cannot inspect the native share sheet or the Photos/Gallery
 destination. Keep photo save in draft until all of these pass on installed PWAs:
@@ -172,6 +188,17 @@ destination. Keep photo save in draft until all of these pass on installed PWAs:
 - cancel on each platform and retry without reloading the app
 - repeat in airplane mode, with repeated captures, and from the viewer after
   fully closing and reopening the app
+
+For a photo package release, test 60, 75, and 100 real photos on the installed
+iPhone PWA. Record preparation time and ZIP size, share to Google Drive, download
+to Files, and confirm the destination sizes match the app. Extract the archive
+on a computer and check the entry count, order, filenames, and first/middle/last
+photo bytes. Also cancel and retry, prepare offline, and prepare again after
+fully closing the PWA. Stop if any photo is missing or duplicated, any size
+differs, cancellation disables retry, or the app claims an upload succeeded.
+
+Android package sharing is supported on a best-effort basis but remains
+unverified because the maintainer does not have an Android test device.
 
 GitHub Actions runs the same test for pull requests and pushes to `main`.
 
@@ -201,3 +228,8 @@ survive clearing browser data, so exports remain required after every visit.
 Version 1.6 establishes the pure, in-memory photo manifest that future batch
 sharing and PDF captions will use. It does not yet add a batch-share control or
 upload anything; the existing one-photo-at-a-time share action is unchanged.
+
+Version 1.7 uses that manifest to prepare one trustworthy, byte-preserving ZIP
+for Drive handoff. The archive is built only when requested and held in memory;
+any change to survey identity, room names, photo order, or photo content makes
+it stale and disables both share and download until it is prepared again.
