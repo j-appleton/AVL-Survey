@@ -9,6 +9,9 @@ var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 var LEGACY_V1 = JSON.parse(
   await readFile(join(ROOT, "tests", "fixtures", "legacy-v1.json"), "utf8")
 );
+var PORTABLE_V3 = JSON.parse(
+  await readFile(join(ROOT, "tests", "fixtures", "portable-v3.json"), "utf8")
+);
 var PACKAGE_VERSION = JSON.parse(
   await readFile(join(ROOT, "package.json"), "utf8")
 ).version;
@@ -108,10 +111,22 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
       "Imported client"
     );
 
+    var portableImported = await page.evaluate(async function(payload){
+      var ok = await window.__avl.applyImport(JSON.stringify(payload));
+      return {
+        ok:ok,
+        client:window.__avl.S().visit.client,
+        photo:window.__avl.S().photos["21|notes"][0]
+      };
+    },PORTABLE_V3);
+    assert.equal(portableImported.ok,true);
+    assert.equal(portableImported.client,"Portable client");
+    assert.equal(portableImported.photo,PORTABLE_V3.data.photos["21|notes"][0].data);
+
     var backupClient = await page.evaluate(function(){
       return JSON.parse(window.__avl.backupRaw()).data.visit.client;
     });
-    assert.equal(backupClient, "Legacy client");
+    assert.equal(backupClient, "Imported client");
 
     assert.equal(
       await page.evaluate(function(){ return window.__avl.restoreBackup(); }),
@@ -123,7 +138,7 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
         undo:JSON.parse(window.__avl.backupRaw()).data.visit.client
       };
     });
-    assert.deepEqual(restored, {current:"Legacy client", undo:"Imported client"});
+    assert.deepEqual(restored, {current:"Imported client", undo:"Portable client"});
 
     var siteOnlyCountsAsWork = await page.evaluate(function(){
       var state = window.__avl.S();

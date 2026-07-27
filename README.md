@@ -111,7 +111,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v12";  // bump this for every runtime change
+var CACHE = "avl-survey-v13";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -243,3 +243,11 @@ now consume resident Blobs through one accessor. Object URLs are retired when
 photos leave the survey and on page exit, while an open viewer keeps its current
 photo alive. Save photo stays disabled until the exact current File is ready, so
 the trusted share tap performs no storage read or decode.
+
+Version 1.9 makes every photo-reading surface understand either today’s inline
+image or a stable device-storage descriptor. It adds a keys-only integrity
+check, explicit missing-photo states, true byte counts in the manifest, compact
+descriptor backups, and portable schema-v3 exports that re-inline every image.
+Capture remains unchanged and schema v2 stays authoritative, so this release
+creates no descriptors during normal use and can be rolled back without a data
+migration. The next release is the deliberate capture-and-schema flip.

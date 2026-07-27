@@ -209,8 +209,22 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
 
       var exported = JSON.parse(await readFile(join(extracted,"survey-export.json"),"utf8"));
       assert.equal(exported.app, "avl-survey");
-      assert.equal(exported.schema, 2);
-      assert.deepEqual(exported.data.photos,packageState().photos);
+      assert.equal(exported.schema, 3);
+      assert.equal(exported.photoFormat, "inline");
+      assert.deepEqual(
+        Object.keys(exported.data.photos),
+        Object.keys(packageState().photos)
+      );
+      Object.keys(exported.data.photos).forEach(function(key){
+        assert.deepEqual(
+          exported.data.photos[key].map(function(entry){ return entry.data; }),
+          packageState().photos[key]
+        );
+        exported.data.photos[key].forEach(function(entry){
+          assert.equal(typeof entry.id,"undefined");
+          assert.equal(entry.bytes,Buffer.from(entry.data.split(",")[1],"base64").length);
+        });
+      });
       var fresh = await context.newPage();
       await fresh.goto(origin + "/", {waitUntil:"domcontentloaded"});
       await fresh.waitForFunction(function(){ return !!window.__avl; });

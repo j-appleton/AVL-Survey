@@ -1,0 +1,30 @@
+{
+  "app": "avl-survey",
+  "schema": 3,
+  "appVersion": "1.9.0",
+  "exportedAt": "2026-07-27T00:00:00.000Z",
+  "photoFormat": "inline",
+  "data": {
+    "visit": {"client": "Portable client"},
+    "log": {},
+    "rooms": [{"id": 21, "d": {"name": "Portable room"}}],
+    "photos": {
+      "21|notes": [
+        {
+          "mime": "image/jpeg",
+          "width": 2,
+          "height": 2,
+          "bytes": 6,
+          "data": "data:image/jpeg;base64,AQIDBPr7"
+        }
+      ]
+    },
+    "skipped": {},
+    "ui": {},
+    "meta": {
+      "created": "2026-07-27T00:00:00.000Z",
+      "updated": "2026-07-27T00:00:00.000Z",
+      "app": "1.9.0"
+    }
+  }
+}

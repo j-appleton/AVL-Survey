@@ -255,8 +255,45 @@ test("photo manifest uses MIME extensions and frozen section labels without muta
       sectionId:"disp",
       sectionLabel:"Display",
       mime:"image/png",
-      sourceLength:PNG.length
+      bytes:3
     });
+  });
+});
+
+test("descriptor manifests stay pure and use declared bytes without reading storage", async function(){
+  await withApp(async function(page){
+    var result = await page.evaluate(async function(){
+      var data = {
+        visit:{site:"Descriptor site"},
+        log:{},
+        rooms:[{id:1,d:{name:"Descriptor room"}}],
+        photos:{
+          "1|audio":[
+            {id:"photo-a",mime:"image/jpeg",bytes:110341,width:900,height:675}
+          ]
+        },
+        skipped:{},
+        ui:{}
+      };
+      var reads = 0;
+      window.AVLPhotoStore.keys = function(){ return Promise.resolve(["photo-a"]); };
+      window.AVLPhotoStore.get = function(){ reads++; return Promise.reject(new Error("manifest must stay pure")); };
+      await window.__avl.setDescriptorStateForTest(data);
+      var before = JSON.stringify(window.__avl.S());
+      var manifest = window.__avl.photoManifest();
+      return {
+        manifest:manifest,
+        reads:reads,
+        unchanged:JSON.stringify(window.__avl.S()) === before
+      };
+    });
+    assert.equal(result.reads,0);
+    assert.equal(result.unchanged,true);
+    assert.equal(result.manifest.length,1);
+    assert.equal(result.manifest[0].mime,"image/jpeg");
+    assert.equal(result.manifest[0].bytes,110341);
+    assert.equal(result.manifest[0].filename,"001_R01_audio.jpg");
+    assert.equal("sourceLength" in result.manifest[0],false);
   });
 });
 
