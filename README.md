@@ -113,7 +113,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v14";  // bump this for every runtime change
+var CACHE = "avl-survey-v15";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -133,7 +133,8 @@ files from an iPhone.
 
 The browser suites start the app on localhost and verify:
 
-- legacy data migrates to schema v2 and saves in a versioned envelope
+- legacy data migrates to schema v3 and saves in a versioned envelope without
+  replacing its existing metadata
 - damaged, foreign, and newer-schema imports cannot replace valid work
 - import and clear snapshots can be restored, and restore is itself undoable
 - unreadable stored data is salvaged rather than silently discarded
@@ -152,8 +153,9 @@ The browser suites start the app on localhost and verify:
 - capture batches preserve selection order, render once, report once, and never
   open the viewer automatically; a simulated storage-full failure remains
   persistently visible and shareable for the current session
-- new captures are mirrored byte-exactly to IndexedDB under unique stable IDs,
-  while schema v2 stays authoritative if the new store is unavailable
+- new captures store byte-exact photos in IndexedDB under unique stable IDs and
+  persist only verified descriptors in schema v3; failed storage falls back to
+  inline survey photos without interrupting capture
 - the derived photo manifest includes every photo exactly once in stable site,
   room, section, and bucket order; filenames use global references, visible room
   positions, frozen section slugs, and the source image MIME
@@ -215,9 +217,9 @@ or deleting the home screen app, wipes it. **Export after every site visit.**
 The app stores schema-versioned data and keeps a pre-destructive backup before
 import or clear. Individual photo deletion requires two taps but is not
 recoverable. Unreadable stored data is retained separately for recovery. The
-Data & storage card measures usage against the approximately 5 MB localStorage
-ceiling, warns at 60%, and escalates at 85%. This makes the current photo limit
-visible.
+Data & storage card measures survey-state and inline-fallback usage against the
+approximately 5 MB localStorage ceiling, warns at 60%, and escalates at 85%.
+Authoritative photo bytes are stored separately in IndexedDB.
 
 Version 1.5 begins the photo-storage transition by also writing each newly
 captured, compressed photo to IndexedDB with a stable ID. Schema v2, exports,
@@ -263,3 +265,11 @@ through its manual Save action. Schema v2 and the existing dual-write storage
 authority remain unchanged. If the temporary device-storage mirror fails, the
 Data & storage panel keeps the export warning visible instead of letting the
 batch summary overwrite it.
+
+Version 1.10 makes device storage authoritative for new captures and moves the
+survey envelope to schema v3. A descriptor is assembled only from the record
+returned by IndexedDB, read back before it can persist, and replaced by an inline
+fallback if either write or verification fails. Portable imports assign fresh
+IDs and fall back as one whole file rather than leaving mixed authority. Field
+edits made during the short verification window are included in the batch-end
+save, and unreadable prior data keeps a persistent salvage warning.

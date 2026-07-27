@@ -231,17 +231,26 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
       await fresh.evaluate(function(){ localStorage.clear(); });
       await fresh.reload({waitUntil:"domcontentloaded"});
       await fresh.waitForFunction(function(){ return !!window.__avl; });
-      assert.equal(
-        await fresh.evaluate(function(payload){
-          return window.__avl.applyImport(JSON.stringify(payload));
-        }, exported),
-        true,
-        "the packaged export must re-import through the production importer"
-      );
-      assert.deepEqual(
-        await fresh.evaluate(function(){ return window.__avl.S().photos; }),
-        packageState().photos
-      );
+      var roundTrip = await fresh.evaluate(async function(payload){
+        var ok = await window.__avl.applyImport(JSON.stringify(payload));
+        var stored = JSON.parse(JSON.stringify(window.__avl.S().photos));
+        var portable = await window.__avl.portableEnvelope();
+        return {ok:ok,stored:stored,portable:portable.data.photos};
+      }, exported);
+      assert.equal(roundTrip.ok,true,
+        "the packaged export must re-import through the production importer");
+      Object.keys(roundTrip.stored).forEach(function(key){
+        roundTrip.stored[key].forEach(function(entry){
+          assert.equal(typeof entry.id,"string");
+          assert.equal(typeof entry.bytes,"number");
+        });
+      });
+      Object.keys(packageState().photos).forEach(function(key){
+        assert.deepEqual(
+          roundTrip.portable[key].map(function(entry){ return entry.data; }),
+          packageState().photos[key]
+        );
+      });
       await fresh.close();
 
       var csvBytes = await readFile(join(extracted,"photo-manifest.csv"));
@@ -263,6 +272,62 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
         })
       );
       assert.match(csvText,/"He said ""go"", then left,\nInc\."/);
+    } finally {
+      await rm(scratch,{recursive:true,force:true});
+    }
+  });
+});
+
+test("captured selection order reaches independently extracted ZIP photo order", async function(){
+  var state = {
+    visit:{client:"Capture order",site:"ZIP guard",date:"2026-07-28"},
+    log:{},
+    rooms:[{id:1,d:{name:"Ordered capture"}}],
+    photos:{},
+    skipped:{},
+    ui:{"1|notes":true}
+  };
+  await withPackageApp({state:state}, async function(page){
+    var sources = {
+      first:"data:image/jpeg;base64,AQ==",
+      second:"data:image/jpeg;base64,AgM=",
+      third:"data:image/jpeg;base64,BAUG"
+    };
+    await page.evaluate(async function(input){
+      var delays = {first:40,second:15,third:1};
+      await window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"first"},{name:"second"},{name:"third"}],
+        function(file,done){
+          setTimeout(function(){
+            done(input[file.name],{width:10,height:10});
+          },delays[file.name]);
+        }
+      );
+    },sources);
+    await prepare(page);
+    var manifest = await page.evaluate(function(){ return window.__avl.photoManifest(); });
+    var bytes = await packageBytes(page);
+    var scratch = await mkdtemp(join(tmpdir(),"avl-capture-order-"));
+    try {
+      var archivePath = join(scratch,"package.zip");
+      var extracted = join(scratch,"extracted");
+      await writeFile(archivePath,bytes);
+      var listing = await execFile("/usr/bin/unzip",["-Z1",archivePath]);
+      assert.deepEqual(listing.stdout.trim().split("\n").slice(0,3),[
+        "photos/001_R01_notes.jpg",
+        "photos/002_R01_notes.jpg",
+        "photos/003_R01_notes.jpg"
+      ]);
+      assert.deepEqual(
+        manifest.map(function(entry){ return entry.filename; }),
+        ["001_R01_notes.jpg","002_R01_notes.jpg","003_R01_notes.jpg"]
+      );
+      await execFile("/usr/bin/unzip",["-qq",archivePath,"-d",extracted]);
+      for(var i=0;i<manifest.length;i++){
+        var extractedPhoto = await readFile(join(extracted,"photos",manifest[i].filename));
+        assert.deepEqual(Array.from(extractedPhoto),[[1],[2,3],[4,5,6]][i]);
+      }
     } finally {
       await rm(scratch,{recursive:true,force:true});
     }
@@ -296,7 +361,7 @@ test("package photo reads cross the resident Blob accessor without changing surv
     assert.equal(result.calls,1,"readPhotoSource must consume the Blob returned by the photo accessor");
     assert.equal(result.mime,"image/jpeg");
     assert.deepEqual(result.bytes,JPG_BYTES);
-    assert.equal(result.identity,result.stored,"schema-v2 stale identity remains the complete data URL");
+    assert.equal(result.identity,result.stored,"inline stale identity remains the complete data URL");
     assert.equal(await surveyStateSnapshot(page),before);
   });
 });
