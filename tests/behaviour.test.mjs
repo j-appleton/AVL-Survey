@@ -363,8 +363,17 @@ test("photo thumbnails open the stored image without mutating the survey", async
     await importPhotos(page, "Photo guard");
 
     var before = await surveyStateSnapshot(page);
+    await page.waitForFunction(function(){
+      var image = document.querySelector('[data-photos="1|notes"] .ph img:nth-of-type(1)');
+      return image && /^blob:/.test(image.getAttribute("src") || "");
+    });
+    var selectedSource = await page.locator('[data-photos="1|notes"] .ph img').nth(1).getAttribute("src");
 
     await page.locator('[data-photos="1|notes"] .ph img').nth(1).click();
+    await page.waitForFunction(function(expected){
+      var image = document.querySelector(".phvimage");
+      return image && image.getAttribute("src") === expected;
+    }, selectedSource);
 
     var after = await page.evaluate(function(){
       var viewer = document.querySelector(".phviewer");
@@ -380,9 +389,118 @@ test("photo thumbnails open the stored image without mutating the survey", async
     assert.equal(await surveyStateSnapshot(page), before, "opening the viewer must not alter survey state");
     assert.equal(after.dialog, "dialog");
     assert.equal(after.modal, "true");
-    assert.equal(after.src, distinctPhotos()[1], "the viewer must use the selected thumbnail's own source");
+    assert.match(after.src, /^blob:/, "stored photo bytes must render through an object URL");
+    assert.equal(after.src, selectedSource, "the viewer must use the selected thumbnail's hydrated source");
     assert.equal(after.fit, "contain", "the stored image must be shown uncropped");
     assert.equal(after.confirms, 0, "thumbnail taps must not invoke a native dialog");
+  });
+});
+
+test("photo hydration fills placeholders in place without re-rendering the survey", async function(){
+  await withApp(async function(page){
+    await page.addInitScript(function(){
+      var realSetTimeout = window.setTimeout.bind(window);
+      window.__photoHydrationTimers = [];
+      window.setTimeout = function(fn,delay){
+        if(delay === 0){
+          window.__photoHydrationTimers.push(fn);
+          return -1000 - window.__photoHydrationTimers.length;
+        }
+        return realSetTimeout(fn,delay);
+      };
+    });
+  }, async function(page){
+    await importPhotos(page,"Hydration guard");
+    var pending = await page.evaluate(function(){
+      var items = Array.prototype.slice.call(document.querySelectorAll('[data-photos="1|notes"] .photoitem'));
+      window.__photoPlaceholderItems = items;
+      return {
+        timers:window.__photoHydrationTimers.length,
+        sources:items.map(function(item){ return item.querySelector("img").getAttribute("src"); }),
+        loading:items.map(function(item){ return item.querySelector(".phload").textContent; })
+      };
+    });
+    assert.equal(pending.timers,3);
+    assert.deepEqual(pending.sources,[null,null,null]);
+    assert.deepEqual(pending.loading,["Loading photo","Loading photo","Loading photo"]);
+
+    await page.evaluate(function(){
+      var timers = window.__photoHydrationTimers.splice(0);
+      timers.forEach(function(fn){ fn(); });
+    });
+    await page.waitForFunction(function(){
+      return Array.prototype.every.call(
+        document.querySelectorAll('[data-photos="1|notes"] .ph img'),
+        function(image){ return /^blob:/.test(image.getAttribute("src") || ""); }
+      );
+    });
+    var hydrated = await page.evaluate(function(){
+      var items = Array.prototype.slice.call(document.querySelectorAll('[data-photos="1|notes"] .photoitem'));
+      return {
+        sameNodes:items.every(function(item,index){ return item === window.__photoPlaceholderItems[index]; }),
+        ready:items.every(function(item){ return item.querySelector("[data-viewph]").classList.contains("ready"); })
+      };
+    });
+    assert.equal(hydrated.sameNodes,true,"hydration must update the existing thumbnails, not re-render the app");
+    assert.equal(hydrated.ready,true);
+  });
+});
+
+test("object URLs survive an open viewer, revoke after deletion closes, and clear on pagehide", async function(){
+  await withApp(async function(page){
+    await page.addInitScript(function(){
+      window.__photoObjectUrls = [];
+      window.__photoRevokedUrls = [];
+      URL.createObjectURL = function(){
+        var value = "blob:photo-asset-" + (window.__photoObjectUrls.length + 1);
+        window.__photoObjectUrls.push(value);
+        return value;
+      };
+      URL.revokeObjectURL = function(value){
+        window.__photoRevokedUrls.push(value);
+      };
+    });
+  }, async function(page){
+    await importPhotos(page,"URL lifecycle");
+    await page.waitForFunction(function(){ return window.__avl.photoAssetStatus().length === 3; });
+    await page.locator('[data-photos="1|notes"] [data-viewph]').first().click();
+    await page.waitForFunction(function(){
+      var button = document.querySelector("[data-phv-save]");
+      return button && !button.disabled;
+    });
+    var heldUrl = await page.locator(".phvimage").getAttribute("src");
+
+    var during = await page.evaluate(function(){
+      var button = document.querySelector('[data-photos="1|notes"] [data-delph="0"]');
+      button.click();
+      button.click();
+      return {
+        count:window.__avl.S().photos["1|notes"].length,
+        revoked:window.__photoRevokedUrls.slice()
+      };
+    });
+    assert.equal(during.count,2);
+    assert.equal(
+      during.revoked.indexOf(heldUrl),
+      -1,
+      "an object URL held by the open viewer must survive removal from survey state"
+    );
+
+    await page.locator("[data-phv-close]").click();
+    assert.equal(
+      await page.evaluate(function(url){ return window.__photoRevokedUrls.indexOf(url) > -1; }, heldUrl),
+      true,
+      "the removed photo's URL must revoke once the viewer releases it"
+    );
+    await page.waitForFunction(function(){ return window.__avl.photoAssetStatus().length === 2; });
+    var liveUrls = await page.evaluate(function(){
+      return window.__avl.photoAssetStatus().map(function(asset){ return asset.url; });
+    });
+    await page.evaluate(function(){ window.dispatchEvent(new Event("pagehide")); });
+    var revoked = await page.evaluate(function(){ return window.__photoRevokedUrls.slice(); });
+    liveUrls.forEach(function(url){
+      assert.ok(revoked.indexOf(url) > -1,"pagehide must revoke every live photo URL");
+    });
   });
 });
 
@@ -412,6 +530,7 @@ test("photo controls are siblings and two taps delete only the armed image", asy
             overflow:getComputedStyle(item).overflow,
             previewTag:item.children[0] && item.children[0].tagName,
             previewClass:item.children[0] && item.children[0].className,
+            previewIsPh:item.children[0] && item.children[0].classList.contains("ph"),
             deleteTag:item.children[1] && item.children[1].tagName,
             deleteClass:item.children[1] && item.children[1].className,
             deleteDirect:item.children[1] && item.children[1].parentNode === item
@@ -428,7 +547,7 @@ test("photo controls are siblings and two taps delete only the armed image", asy
     structure.items.forEach(function(item){
       assert.equal(item.overflow, "visible", "the positioned wrapper must remain clip-free");
       assert.equal(item.previewTag, "BUTTON", "the thumbnail must be a real activatable control");
-      assert.equal(item.previewClass, "ph");
+      assert.equal(item.previewIsPh, true);
       assert.equal(item.deleteTag, "BUTTON");
       assert.equal(item.deleteClass, "phdel");
       assert.equal(item.deleteDirect, true, "thumbnail and delete control must be siblings");
@@ -490,7 +609,8 @@ test("photo controls are siblings and two taps delete only the armed image", asy
 
     await red.click();
     await page.waitForFunction(function(){
-      return window.__avl.S().photos["1|notes"].length === 2;
+      var images = document.querySelectorAll('[data-photos="1|notes"] .ph img[src^="blob:"]');
+      return window.__avl.S().photos["1|notes"].length === 2 && images.length === 2;
     }, null, {timeout:2000});
 
     var result = await page.evaluate(function(){
@@ -501,6 +621,7 @@ test("photo controls are siblings and two taps delete only the armed image", asy
           strip.querySelectorAll(".ph img"),
           function(img){ return img.getAttribute("src"); }
         ),
+        assets:window.__avl.photoAssetStatus(),
         armed:strip.querySelectorAll('.phdel[data-armed="1"]').length,
         labels:Array.prototype.map.call(strip.querySelectorAll("[data-delph]"), function(btn){
           return btn.getAttribute("aria-label");
@@ -510,7 +631,18 @@ test("photo controls are siblings and two taps delete only the armed image", asy
       };
     });
     assert.deepEqual(result.photos, [photos[1], photos[2]], "deletion must remove red and preserve green + blue");
-    assert.deepEqual(result.rendered, [photos[1], photos[2]], "the rendered strip must match saved order");
+    assert.equal(result.rendered.length, 2);
+    result.rendered.forEach(function(url){ assert.match(url, /^blob:/); });
+    assert.deepEqual(
+      result.rendered,
+      result.assets.map(function(asset){ return asset.url; }),
+      "the rendered strip must follow the hydrated asset order"
+    );
+    assert.deepEqual(
+      result.assets.map(function(asset){ return asset.source; }),
+      [photos[1],photos[2]],
+      "index shifts must not attach a deleted photo's Blob to its neighbour"
+    );
     assert.equal(result.armed, 0, "the deletion render must clear every armed state");
     assert.deepEqual(result.labels, ["Delete photo 1 of 2", "Delete photo 2 of 2"]);
     assert.equal(result.lastIsAdd, true, "Add Photo must remain last after re-render");

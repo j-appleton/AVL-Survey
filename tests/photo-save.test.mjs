@@ -7,6 +7,8 @@ import { launchBrowser, serve, surveyStateSnapshot } from "./app-test-helpers.mj
 var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 var EXACT_BYTES = [0,1,2,127,128,129,250,251,252,253,254,255,10,13,20,40,80,120,160,200];
 var EXACT_PHOTO = "data:image/jpeg;base64," + Buffer.from(EXACT_BYTES).toString("base64");
+var SECOND_BYTES = [255,216,255,224,11,22,33,44,55,66,77,88,99,110,121,132,143,154,165,176,255,217];
+var SECOND_PHOTO = "data:image/jpeg;base64," + Buffer.from(SECOND_BYTES).toString("base64");
 
 async function withPhotoApp(options, run){
   var server = await serve(ROOT);
@@ -22,14 +24,17 @@ async function withPhotoApp(options, run){
       window.__shareCalls = [];
       window.__canShareCalls = [];
       window.__shareSupported = config.supported;
+      window.__shareMicrotasks = 0;
       Object.defineProperty(navigator, "canShare", {
         configurable:true,
         value:function(data){
           window.__canShareCalls.push({
             data:data,
             file:data.files && data.files[0],
+            microtasks:window.__shareMicrotasks,
             active:navigator.userActivation ? navigator.userActivation.isActive : null
           });
+          Promise.resolve().then(function(){ window.__shareMicrotasks++; });
           return window.__shareSupported;
         }
       });
@@ -39,6 +44,7 @@ async function withPhotoApp(options, run){
           var call = {
             data:data,
             file:data.files && data.files[0],
+            microtasks:window.__shareMicrotasks,
             active:navigator.userActivation ? navigator.userActivation.isActive : null
           };
           window.__shareCalls.push(call);
@@ -99,6 +105,8 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
         sameFile:can.file === call.file,
         canActive:can.active,
         shareActive:call.active,
+        canMicrotasks:can.microtasks,
+        shareMicrotasks:call.microtasks,
         name:call.file.name,
         type:call.file.type,
         size:call.file.size,
@@ -111,6 +119,11 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
     assert.equal(shared.sameFile, true, "canShare must receive the actual File passed to share");
     assert.equal(shared.canActive, true, "File support must be checked in the trusted tap");
     assert.equal(shared.shareActive, true, "share() must remain inside transient user activation");
+    assert.equal(
+      shared.shareMicrotasks,
+      shared.canMicrotasks,
+      "no microtask checkpoint may pass between canShare and navigator.share"
+    );
     assert.equal(shared.name, "avl-survey-exact-byte-client-2026-07-25-1-notes-photo-1.jpg");
     assert.equal(shared.type, "image/jpeg");
     assert.equal(shared.size, EXACT_BYTES.length);
@@ -141,6 +154,73 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
     });
     assert.equal(await surveyStateSnapshot(page), before, "share resolution must not mutate survey state");
     assert.doesNotMatch(completed.viewerText, /\bSaved\b/i, "the browser cannot prove a Photos/Gallery save");
+  });
+});
+
+test("viewer disables Save until the exact Blob is resident and navigation shares the current photo", async function(){
+  await withPhotoApp({}, async function(page){
+    var imported = await page.evaluate(function(items){
+      return window.__avl.applyImport(JSON.stringify({
+        visit:{client:"Current photo",date:"2026-07-25"},
+        log:{},
+        rooms:[{id:1,d:{name:"Residency guard"}}],
+        photos:{"1|notes":items},
+        skipped:{},
+        ui:{"1|notes":true}
+      }));
+    }, [EXACT_PHOTO,SECOND_PHOTO]);
+    assert.equal(imported,true);
+    var before = await surveyStateSnapshot(page);
+
+    var initial = await page.evaluate(function(){
+      window.__avl.openPhotoViewer("1|notes",0);
+      var button = document.querySelector("[data-phv-save]");
+      return {
+        disabled:button.disabled,
+        label:button.textContent,
+        src:document.querySelector(".phvimage").getAttribute("src")
+      };
+    });
+    assert.equal(initial.disabled,true);
+    assert.equal(initial.label,"Preparing photo\u2026");
+    assert.equal(initial.src,null);
+
+    await page.waitForFunction(function(){
+      var button = document.querySelector("[data-phv-save]");
+      return button && !button.disabled && /^blob:/.test(document.querySelector(".phvimage").src);
+    });
+    var moved = await page.evaluate(function(){
+      document.querySelector("[data-phv-next]").click();
+      var button = document.querySelector("[data-phv-save]");
+      button.click();
+      return {
+        disabled:button.disabled,
+        label:button.textContent,
+        count:document.querySelector(".phvtop .phvcount").textContent,
+        shareCalls:window.__shareCalls.length
+      };
+    });
+    assert.equal(moved.disabled,true,"navigation must invalidate the previous resident File immediately");
+    assert.equal(moved.label,"Preparing photo\u2026");
+    assert.equal(moved.count,"Photo 2 of 2");
+    assert.equal(moved.shareCalls,0,"a tap before current-photo residency must not share the neighbour");
+
+    await page.waitForFunction(function(){
+      var button = document.querySelector("[data-phv-save]");
+      return button && !button.disabled;
+    });
+    await page.locator("[data-phv-save]").click();
+    var shared = await page.evaluate(async function(){
+      var call = window.__shareCalls[0];
+      return {
+        name:call.file.name,
+        bytes:Array.from(new Uint8Array(await call.file.arrayBuffer()))
+      };
+    });
+    assert.match(shared.name,/-photo-2\.jpg$/);
+    assert.deepEqual(shared.bytes,SECOND_BYTES);
+    assert.equal(await surveyStateSnapshot(page),before);
+    await page.evaluate(function(){ window.__shareCalls[0].resolve(); });
   });
 });
 

@@ -255,6 +255,38 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
   });
 });
 
+test("package photo reads cross the resident Blob accessor without changing survey state", async function(){
+  await withPackageApp({}, async function(page){
+    var before = await surveyStateSnapshot(page);
+    var result = await page.evaluate(async function(){
+      var entry = window.__avl.photoManifest()[0];
+      var original = Blob.prototype.arrayBuffer;
+      var calls = 0;
+      Blob.prototype.arrayBuffer = function(){
+        calls++;
+        return original.call(this);
+      };
+      try {
+        var source = await window.__avl.readPhotoSource(entry);
+        return {
+          calls:calls,
+          mime:source.mime,
+          bytes:Array.from(source.bytes),
+          identity:source.identity,
+          stored:window.__avl.S().photos[entry.key][entry.bucketIndex]
+        };
+      } finally {
+        Blob.prototype.arrayBuffer = original;
+      }
+    });
+    assert.equal(result.calls,1,"readPhotoSource must consume the Blob returned by the photo accessor");
+    assert.equal(result.mime,"image/jpeg");
+    assert.deepEqual(result.bytes,JPG_BYTES);
+    assert.equal(result.identity,result.stored,"schema-v2 stale identity remains the complete data URL");
+    assert.equal(await surveyStateSnapshot(page),before);
+  });
+});
+
 test("Share package uses the actual prepared File synchronously, blocks overlap and permits cancel retry", async function(){
   await withPackageApp({}, async function(page){
     await prepare(page);

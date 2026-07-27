@@ -111,7 +111,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v11";  // bump this for every runtime change
+var CACHE = "avl-survey-v12";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -139,10 +139,12 @@ The browser suites start the app on localhost and verify:
 - photo controls remain valid siblings, only one delete can be armed at a time,
   and a second tap removes exactly the selected image
 - the full-screen viewer uses the selected stored image uncropped, stays inside
-  its section, cancels armed deletion, and restores scroll position and focus
+  its section, cancels armed deletion, and restores scroll position and focus;
+  thumbnails hydrate from Blob URLs in place without re-rendering the survey
 - Save photo passes the actual byte-exact `File` to `canShare()` and `share()`
-  within the trusted tap, blocks overlapping calls, treats cancellation calmly,
-  never mutates survey state, and never reports an unverifiable save
+  within the trusted tap only after the current photo is resident, blocks
+  overlapping calls, treats cancellation calmly, never mutates survey state,
+  and never reports an unverifiable save
 - unsupported or failed file sharing exposes a byte-exact download fallback,
   while successful capture opens the stored survey copy and its manual save action
 - capture persistence completes before the viewer opens; a simulated
@@ -233,3 +235,11 @@ Version 1.7 uses that manifest to prepare one trustworthy, byte-preserving ZIP
 for Drive handoff. The archive is built only when requested and held in memory;
 any change to survey identity, room names, photo order, or photo content makes
 it stale and disables both share and download until it is prepared again.
+
+Version 1.8 adds the photo read seam needed for the storage transition. Persisted
+survey data remains schema v2 and localStorage remains authoritative, but runtime
+thumbnails, the viewer, printing, single-photo sharing, and package preparation
+now consume resident Blobs through one accessor. Object URLs are retired when
+photos leave the survey and on page exit, while an open viewer keeps its current
+photo alive. Save photo stays disabled until the exact current File is ready, so
+the trusted share tap performs no storage read or decode.

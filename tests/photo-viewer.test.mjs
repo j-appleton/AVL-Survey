@@ -50,8 +50,21 @@ test("viewer navigates within one section and shows the selected stored source u
   await withViewer(async function(page){
     var before = await surveyStateSnapshot(page);
     var trigger = page.locator('[data-photos="1|notes"] [data-viewph]').nth(1);
+    await page.waitForFunction(function(){
+      return Array.prototype.every.call(
+        document.querySelectorAll('[data-photos="1|notes"] .ph img'),
+        function(image){ return /^blob:/.test(image.getAttribute("src") || ""); }
+      );
+    });
+    var thumbnailSources = await page.locator('[data-photos="1|notes"] .ph img').evaluateAll(function(images){
+      return images.map(function(image){ return image.getAttribute("src"); });
+    });
     var selectedSource = await trigger.locator("img").getAttribute("src");
     await trigger.click();
+    await page.waitForFunction(function(){
+      var button = document.querySelector("[data-phv-save]");
+      return button && !button.disabled;
+    });
 
     var opened = await page.evaluate(function(){
       var image = document.querySelector(".phvimage");
@@ -73,19 +86,26 @@ test("viewer navigates within one section and shows the selected stored source u
     assert.equal(opened.title, "Photo guard \u00b7 Notes & red flags");
     assert.equal(opened.count, "Photo 2 of 3");
     assert.equal(opened.saveLabel, "Save photo\u2026");
-    assert.equal(opened.src, selectedSource, "the viewer must reuse the thumbnail's exact stored source");
+    assert.match(opened.src, /^blob:/);
+    assert.equal(opened.src, selectedSource, "the viewer must reuse the thumbnail's hydrated source");
     assert.equal(opened.fit, "contain");
     assert.equal(opened.prevDisabled, false);
     assert.equal(opened.nextDisabled, false);
     assert.equal(opened.focused, true, "the visible close control must receive initial focus");
 
     await page.locator("[data-phv-next]").click();
-    assert.equal(await page.locator(".phvimage").getAttribute("src"), photos()[2]);
+    await page.waitForFunction(function(expected){
+      return document.querySelector(".phvimage").getAttribute("src") === expected;
+    }, thumbnailSources[2]);
+    assert.equal(await page.locator(".phvimage").getAttribute("src"), thumbnailSources[2]);
     assert.equal(await page.locator(".phvtop .phvcount").textContent(), "Photo 3 of 3");
     assert.equal(await page.locator("[data-phv-next]").isDisabled(), true);
 
     await page.keyboard.press("ArrowLeft");
-    assert.equal(await page.locator(".phvimage").getAttribute("src"), photos()[1]);
+    await page.waitForFunction(function(expected){
+      return document.querySelector(".phvimage").getAttribute("src") === expected;
+    }, thumbnailSources[1]);
+    assert.equal(await page.locator(".phvimage").getAttribute("src"), thumbnailSources[1]);
     assert.equal(await page.locator(".phvtop .phvcount").textContent(), "Photo 2 of 3");
     assert.equal(
       await surveyStateSnapshot(page),
