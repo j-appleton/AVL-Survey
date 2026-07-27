@@ -199,6 +199,11 @@ button.btn:active{transform:translateY(1px)}
 .roomhd .nm{flex:1;font-weight:700;font-size:16px}
 .roomhd .pct{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .roomtools{display:flex;gap:6px;padding:10px 14px;border-top:1px solid var(--line);background:var(--bg)}
+.pkg{border-top:1px solid var(--line);padding:12px 0;margin-top:12px}
+.pkgtools{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+.pkgtools .btn{flex:1;min-width:180px}
+.pkgsummary{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.pkgstatus{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.45}
 
 /* footer bar */
 .foot{
@@ -304,7 +309,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.6.0";
+var APP_VERSION = "1.7.0";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -1039,7 +1044,7 @@ function photoFileName(key, index, mime){
   return slug() + "-" + String(key).split("|").join("-") +
     "-photo-" + (parseInt(index,10) + 1) + "." + photoExtension(mime);
 }
-function dataUrlToFile(dataUrl, key, index){
+function decodeDataUrl(dataUrl){
   var comma = String(dataUrl).indexOf(",");
   if(String(dataUrl).slice(0,5) !== "data:" || comma < 6) throw new Error("Invalid photo data");
   var parts = String(dataUrl).slice(5,comma).split(";");
@@ -1061,8 +1066,488 @@ function dataUrlToFile(dataUrl, key, index){
       for(var j=0;j<utf8.length;j++) bytes[j] = utf8.charCodeAt(j);
     }
   }
-  return new File([bytes], photoFileName(key,index,mime), {type:mime,lastModified:Date.now()});
+  return {mime:mime.toLowerCase(), bytes:bytes};
 }
+function dataUrlToFile(dataUrl, key, index){
+  var decoded = decodeDataUrl(dataUrl);
+  return new File(
+    [decoded.bytes],
+    photoFileName(key,index,decoded.mime),
+    {type:decoded.mime,lastModified:Date.now()}
+  );
+}
+
+/* ============================================================
+   PHOTO PACKAGE
+   Store-only ZIP is deliberate: survey JPEGs are already compressed.
+   Preparation is asynchronous; the final share tap does no package work.
+   ============================================================ */
+var ZIP_CRC_TABLE = (function(){
+  var table = new Uint32Array(256);
+  var value, n, bit;
+  for(n=0;n<256;n++){
+    value = n;
+    for(bit=0;bit<8;bit++){
+      value = (value & 1) ? (0xEDB88320 ^ (value >>> 1)) : (value >>> 1);
+    }
+    table[n] = value >>> 0;
+  }
+  return table;
+})();
+function crc32(bytes){
+  var value = 0xFFFFFFFF;
+  for(var i=0;i<bytes.length;i++){
+    value = ZIP_CRC_TABLE[(value ^ bytes[i]) & 0xFF] ^ (value >>> 8);
+  }
+  return (value ^ 0xFFFFFFFF) >>> 0;
+}
+function write16(bytes, offset, value){
+  bytes[offset] = value & 255;
+  bytes[offset+1] = (value >>> 8) & 255;
+}
+function write32(bytes, offset, value){
+  bytes[offset] = value & 255;
+  bytes[offset+1] = (value >>> 8) & 255;
+  bytes[offset+2] = (value >>> 16) & 255;
+  bytes[offset+3] = (value >>> 24) & 255;
+}
+function textBytes(text){
+  var raw = unescape(encodeURIComponent(String(text)));
+  var bytes = new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+function concatBytes(parts){
+  var total = 0;
+  var i;
+  for(i=0;i<parts.length;i++) total += parts[i].length;
+  var out = new Uint8Array(total);
+  var offset = 0;
+  for(i=0;i<parts.length;i++){
+    out.set(parts[i],offset);
+    offset += parts[i].length;
+  }
+  return out;
+}
+function zipStore(entries){
+  if(entries.length > 65535) throw new Error("Too many package entries");
+  var parts = [];
+  var central = [];
+  var offset = 0;
+  for(var i=0;i<entries.length;i++){
+    var name = textBytes(entries[i].name);
+    var data = entries[i].bytes;
+    if(!(data instanceof Uint8Array)) throw new Error("Package entry has no bytes");
+    if(data.length > 0xFFFFFFFF || offset > 0xFFFFFFFF){
+      throw new Error("Package is too large for this ZIP format");
+    }
+    var checksum = crc32(data);
+    var local = new Uint8Array(30 + name.length);
+    write32(local,0,0x04034b50);
+    write16(local,4,20);
+    write16(local,6,0x0800);
+    write16(local,8,0);
+    write16(local,10,0);
+    write16(local,12,0x21);
+    write32(local,14,checksum);
+    write32(local,18,data.length);
+    write32(local,22,data.length);
+    write16(local,26,name.length);
+    write16(local,28,0);
+    local.set(name,30);
+    parts.push(local,data);
+
+    var header = new Uint8Array(46 + name.length);
+    write32(header,0,0x02014b50);
+    write16(header,4,20);
+    write16(header,6,20);
+    write16(header,8,0x0800);
+    write16(header,10,0);
+    write16(header,12,0);
+    write16(header,14,0x21);
+    write32(header,16,checksum);
+    write32(header,20,data.length);
+    write32(header,24,data.length);
+    write16(header,28,name.length);
+    write16(header,30,0);
+    write16(header,32,0);
+    write16(header,34,0);
+    write16(header,36,0);
+    write32(header,38,0);
+    write32(header,42,offset);
+    header.set(name,46);
+    central.push(header);
+    offset += local.length + data.length;
+  }
+
+  var centralSize = 0;
+  for(var j=0;j<central.length;j++) centralSize += central[j].length;
+  var end = new Uint8Array(22);
+  write32(end,0,0x06054b50);
+  write16(end,4,0);
+  write16(end,6,0);
+  write16(end,8,entries.length);
+  write16(end,10,entries.length);
+  write32(end,12,centralSize);
+  write32(end,16,offset);
+  write16(end,20,0);
+  return new Blob(parts.concat(central).concat([end]), {type:"application/zip"});
+}
+function csvCell(value){
+  var text = value === undefined || value === null ? "" : String(value);
+  if(/[",\r\n]/.test(text)) return '"' + text.replace(/"/g,'""') + '"';
+  return text;
+}
+function photoManifestCSV(manifest){
+  var fields = [
+    "ref","filename","key","bucketIndex","roomLabel",
+    "roomName","sectionId","sectionLabel","mime"
+  ];
+  var lines = [fields.join(",")];
+  manifest.forEach(function(entry){
+    lines.push(fields.map(function(field){
+      return csvCell(entry[field]);
+    }).join(","));
+  });
+  var bom = new Uint8Array([0xEF,0xBB,0xBF]);
+  return concatBytes([bom,textBytes(lines.join("\r\n") + "\r\n")]);
+}
+function packageHead(){
+  return {
+    client:String((S.visit && S.visit.client) || ""),
+    site:String((S.visit && S.visit.site) || ""),
+    date:String((S.visit && S.visit.date) || "")
+  };
+}
+function packageSource(entry){
+  var list = S.photos[entry.key] || [];
+  return list[entry.bucketIndex];
+}
+function readPhotoSource(entry){
+  return new Promise(function(resolve,reject){
+    try {
+      var identity = packageSource(entry);
+      var decoded = decodeDataUrl(identity);
+      resolve({mime:decoded.mime,bytes:decoded.bytes,identity:identity});
+    } catch(error){
+      reject(error);
+    }
+  });
+}
+
+var preparedPhotoPackage = null;
+var photoPackageFlight = null;
+function releasePhotoPackage(pkg){
+  if(!pkg) return;
+  if(pkg.objectUrl){
+    try { URL.revokeObjectURL(pkg.objectUrl); } catch(error){}
+    pkg.objectUrl = null;
+  }
+  pkg.file = null;
+}
+function markPhotoPackageStale(pkg){
+  if(pkg && preparedPhotoPackage !== pkg) return;
+  releasePhotoPackage(pkg);
+  preparedPhotoPackage = {
+    status:"stale",
+    message:"Photos changed since preparation. Prepare again.",
+    total:pkg ? pkg.total : photoCount(),
+    progress:0,
+    file:null,
+    objectUrl:null,
+    manifest:[],
+    sources:[],
+    head:null
+  };
+}
+function photoPackageIsCurrent(pkg){
+  if(!pkg || !pkg.manifest || !pkg.sources || !pkg.head) return false;
+  var current;
+  try { current = photoManifest(); }
+  catch(error){ return false; }
+  if(current.length !== pkg.manifest.length || pkg.sources.length !== current.length) return false;
+
+  var head = packageHead();
+  if(head.client !== pkg.head.client || head.site !== pkg.head.site || head.date !== pkg.head.date){
+    return false;
+  }
+  var fields = [
+    "ref","filename","key","bucketIndex","roomName",
+    "sectionLabel","mime","sourceLength"
+  ];
+  for(var i=0;i<current.length;i++){
+    for(var j=0;j<fields.length;j++){
+      if(current[i][fields[j]] !== pkg.manifest[i][fields[j]]) return false;
+    }
+    if(packageSource(current[i]) !== pkg.sources[i]) return false;
+  }
+  return true;
+}
+function photoPackageStatus(){
+  var pkg = preparedPhotoPackage;
+  return {
+    status:pkg ? pkg.status : "idle",
+    total:pkg ? pkg.total : photoCount(),
+    progress:pkg ? pkg.progress : 0,
+    filename:pkg && pkg.file ? pkg.file.name : "",
+    size:pkg && pkg.file ? pkg.file.size : 0,
+    message:pkg ? (pkg.message || "") : "",
+    inFlight:!!photoPackageFlight
+  };
+}
+function photoPackageHTML(){
+  var pkg = preparedPhotoPackage;
+  if(pkg && pkg.status === "ready" && !photoPackageFlight && !photoPackageIsCurrent(pkg)){
+    markPhotoPackageStale(pkg);
+    pkg = preparedPhotoPackage;
+  }
+  var h = '<div class="pkg"><span class="flab">Photo package</span>';
+  if(!pkg || pkg.status === "idle"){
+    h += '<button type="button" class="btn pri" id="pkgprepare">Prepare photo package</button>' +
+      '<span class="hint">Bundles every survey photo, the survey data and a photo list into one ZIP.</span>';
+  } else if(pkg.status === "preparing"){
+    var label = pkg.total
+      ? ("Preparing photo " + Math.max(1,pkg.progress) + " of " + pkg.total + "\u2026")
+      : "Preparing package\u2026";
+    h += '<button type="button" class="btn pri" disabled>' + esc(label) + '</button>';
+  } else if(pkg.status === "stale"){
+    h += '<div class="pkgstatus">' + esc(pkg.message) + '</div>' +
+      '<div class="pkgtools">' +
+      '<button type="button" class="btn pri" disabled>Share package\u2026</button>' +
+      '<button type="button" class="btn ghost" disabled>Download package instead</button>' +
+      '</div><button type="button" class="btn" id="pkgprepare" style="margin-top:8px">Prepare photo package</button>';
+  } else if(pkg.status === "error"){
+    h += '<div class="pkgstatus">' + esc(pkg.message) + '</div>' +
+      '<button type="button" class="btn pri" id="pkgprepare" style="margin-top:8px">Prepare photo package</button>';
+  } else {
+    var busy = !!photoPackageFlight;
+    h += '<div class="pkgsummary">' + pkg.total + ' photo' + (pkg.total === 1 ? '' : 's') +
+      ' ready &middot; ' + fmtMB(pkg.file.size) + '</div>' +
+      '<div class="pkgtools">' +
+      '<button type="button" class="btn pri" id="pkgshare"' + (busy ? ' disabled' : '') + '>' +
+      (busy ? 'Opening share sheet\u2026' : 'Share package\u2026') + '</button>' +
+      '<button type="button" class="btn ghost" id="pkgdownload"' + (busy ? ' disabled' : '') + '>Download package instead</button>' +
+      '</div>';
+    if(!busy){
+      h += '<span class="hint">Opens your device share sheet. Choose Google Drive and select the folder for this visit. Confirm the ZIP appears before leaving the site.</span>';
+      if(pkg.message) h += '<div class="pkgstatus">' + esc(pkg.message) + '</div>';
+    }
+  }
+  return h + '</div>';
+}
+function refreshPhotoPackageUI(){
+  var wrap = document.getElementById("photopackagewrap");
+  if(wrap) wrap.innerHTML = photoPackageHTML();
+}
+function preparePhotoPackage(){
+  if(photoPackageFlight || (preparedPhotoPackage && preparedPhotoPackage.status === "preparing")){
+    return false;
+  }
+  releasePhotoPackage(preparedPhotoPackage);
+  var manifest;
+  var sources;
+  try {
+    manifest = photoManifest();
+    sources = manifest.map(function(entry){ return packageSource(entry); });
+  } catch(error){
+    preparedPhotoPackage = {
+      status:"error",
+      message:"Could not prepare the package. Export the survey data and try again.",
+      total:photoCount(),
+      progress:0
+    };
+    refreshPhotoPackageUI();
+    return false;
+  }
+
+  var pkg = {
+    status:"preparing",
+    message:"",
+    total:manifest.length,
+    progress:manifest.length ? 1 : 0,
+    manifest:manifest,
+    sources:sources,
+    head:packageHead(),
+    photoEntries:[],
+    file:null,
+    objectUrl:null
+  };
+  preparedPhotoPackage = pkg;
+  refreshPhotoPackageUI();
+  var index = 0;
+
+  function failPreparation(){
+    if(preparedPhotoPackage !== pkg) return;
+    releasePhotoPackage(pkg);
+    pkg.status = "error";
+    pkg.message = "Could not prepare the package. Export the survey data and try again.";
+    pkg.photoEntries = [];
+    refreshPhotoPackageUI();
+  }
+  function stalePreparation(){
+    if(preparedPhotoPackage !== pkg) return;
+    markPhotoPackageStale(pkg);
+    refreshPhotoPackageUI();
+  }
+  function finishPreparation(){
+    if(preparedPhotoPackage !== pkg) return;
+    try {
+      var json = JSON.stringify(envelope(),null,2);
+      var entries = pkg.photoEntries.slice();
+      entries.push({name:"survey-export.json",bytes:textBytes(json)});
+      entries.push({name:"photo-manifest.csv",bytes:photoManifestCSV(pkg.manifest)});
+      var archive = zipStore(entries);
+      pkg.file = new File(
+        [archive],
+        slug() + "-package.zip",
+        {type:"application/zip",lastModified:Date.now()}
+      );
+      pkg.photoEntries = [];
+      if(!photoPackageIsCurrent(pkg)){
+        stalePreparation();
+        return;
+      }
+      pkg.status = "ready";
+      pkg.progress = pkg.total;
+      pkg.message = "";
+      refreshPhotoPackageUI();
+    } catch(error){
+      failPreparation();
+    }
+  }
+  function nextPhoto(){
+    if(preparedPhotoPackage !== pkg) return;
+    if(index >= pkg.manifest.length){
+      setTimeout(finishPreparation,0);
+      return;
+    }
+    var entry = pkg.manifest[index];
+    pkg.progress = index + 1;
+    refreshPhotoPackageUI();
+    readPhotoSource(entry).then(function(source){
+      if(preparedPhotoPackage !== pkg) return;
+      if(source.identity !== pkg.sources[index] ||
+         source.mime !== entry.mime ||
+         String(source.identity || "").length !== entry.sourceLength){
+        stalePreparation();
+        return;
+      }
+      pkg.photoEntries.push({
+        name:"photos/" + entry.filename,
+        bytes:source.bytes
+      });
+      index++;
+      setTimeout(nextPhoto,0);
+    }).catch(function(){
+      failPreparation();
+    });
+  }
+  setTimeout(nextPhoto,0);
+  return true;
+}
+function finishPhotoPackageShare(flight, outcome){
+  if(photoPackageFlight !== flight) return;
+  photoPackageFlight = null;
+  var pkg = flight.pkg;
+  if(preparedPhotoPackage !== pkg) return;
+  if(!photoPackageIsCurrent(pkg)){
+    markPhotoPackageStale(pkg);
+    refreshPhotoPackageUI();
+    return;
+  }
+  if(outcome === "cancel"){
+    pkg.message = "Share cancelled. The package is still ready.";
+  } else if(outcome === "failure"){
+    pkg.message = "This browser cannot share the package. Download it instead.";
+  } else {
+    pkg.message = "Share sheet closed. Confirm the package appears in Google Drive before leaving the site.";
+  }
+  refreshPhotoPackageUI();
+}
+function sharePreparedPackage(){
+  if(photoPackageFlight) return false;
+  var pkg = preparedPhotoPackage;
+  if(!pkg || pkg.status !== "ready" || !pkg.file) return false;
+  if(!photoPackageIsCurrent(pkg)){
+    markPhotoPackageStale(pkg);
+    refreshPhotoPackageUI();
+    return false;
+  }
+  var shareData = {files:[pkg.file],title:"AVL survey package"};
+  var supported = false;
+  try {
+    supported = typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare(shareData);
+  } catch(error){
+    supported = false;
+  }
+  if(!supported){
+    pkg.message = "This browser cannot share the package. Download it instead.";
+    refreshPhotoPackageUI();
+    return false;
+  }
+
+  var flight = {pkg:pkg,file:pkg.file};
+  photoPackageFlight = flight;
+  pkg.message = "";
+  refreshPhotoPackageUI();
+  var result;
+  try {
+    /* Nothing may be awaited above this native call. */
+    result = navigator.share(shareData);
+  } catch(error){
+    finishPhotoPackageShare(
+      flight,
+      error && error.name === "AbortError" ? "cancel" : "failure"
+    );
+    return false;
+  }
+  Promise.resolve(result).then(function(){
+    finishPhotoPackageShare(flight,"closed");
+  }).catch(function(error){
+    finishPhotoPackageShare(
+      flight,
+      error && error.name === "AbortError" ? "cancel" : "failure"
+    );
+  });
+  return true;
+}
+function downloadPreparedPackage(){
+  if(photoPackageFlight) return false;
+  var pkg = preparedPhotoPackage;
+  if(!pkg || pkg.status !== "ready" || !pkg.file) return false;
+  if(!photoPackageIsCurrent(pkg)){
+    markPhotoPackageStale(pkg);
+    refreshPhotoPackageUI();
+    return false;
+  }
+  try {
+    if(!pkg.objectUrl) pkg.objectUrl = URL.createObjectURL(pkg.file);
+    var url = pkg.objectUrl;
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = pkg.file.name;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    pkg.message = "Download started \u2014 confirm the ZIP appears in Files before leaving.";
+    refreshPhotoPackageUI();
+    setTimeout(function(){
+      if(preparedPhotoPackage === pkg && pkg.objectUrl === url){
+        try { URL.revokeObjectURL(url); } catch(error){}
+        pkg.objectUrl = null;
+      }
+    },30000);
+    return true;
+  } catch(error){
+    pkg.message = "This browser cannot download the package here. Export the survey data instead.";
+    refreshPhotoPackageUI();
+    return false;
+  }
+}
+
 function defaultPhotoShareHelp(){
   return "Opens your device share sheet. Choose Save Image, Photos, or Gallery.";
 }
@@ -1679,6 +2164,7 @@ function render(){
   h += '<div class="card"><div style="padding:14px">';
   h += '<div class="flab" style="margin-bottom:8px">Data &amp; storage</div>';
   h += '<div id="storagewrap" style="margin-bottom:12px">' + storageHTML() + '</div>';
+  h += '<div id="photopackagewrap">' + photoPackageHTML() + '</div>';
   h += '<div class="roomtools" style="border:0;background:none;padding:0;flex-wrap:wrap">' +
     '<button class="btn sm ghost" id="imp">Import</button>' +
     '<button class="btn sm ghost" id="raw">Show raw data</button>' +
@@ -1843,6 +2329,9 @@ document.addEventListener("click", function(e){
   }
   if(t.id === "save"){ exportJSON(); return; }
   if(t.id === "pdf"){ buildPrint(); return; }
+  if(t.id === "pkgprepare"){ preparePhotoPackage(); return; }
+  if(t.id === "pkgshare"){ sharePreparedPackage(); return; }
+  if(t.id === "pkgdownload"){ downloadPreparedPackage(); return; }
   if(t.id === "imp"){ document.getElementById("jsonin").click(); return; }
   if(t.id === "raw"){ showRaw(JSON.stringify(envelope(),null,2), "Survey data (copy & paste to save)"); return; }
   if(t.id === "restore"){
@@ -2299,6 +2788,17 @@ window.__avl = {
   localBytes:localBytes,
   photoCount:photoCount,
   photoManifest:photoManifest,
+  zipStore:zipStore,
+  photoManifestCSV:photoManifestCSV,
+  readPhotoSource:readPhotoSource,
+  preparePhotoPackage:preparePhotoPackage,
+  sharePreparedPackage:sharePreparedPackage,
+  downloadPreparedPackage:downloadPreparedPackage,
+  photoPackageStatus:photoPackageStatus,
+  photoPackageIsCurrent:photoPackageIsCurrent,
+  photoPackageFile:function(){
+    return preparedPhotoPackage && preparedPhotoPackage.file;
+  },
   ROOM_SECTIONS:ROOM_SECTIONS,
   storagePersistStatus:function(){
     return {state:storagePersistState, requested:storagePersistRequested};
