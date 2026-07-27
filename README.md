@@ -1,6 +1,6 @@
-# AVL Site Survey — install guide
+# Preplot
 
-A pre-install AV site survey app. Runs entirely in the browser, works offline,
+Preplot is a pre-install AV site survey app. It runs entirely in the browser, works offline,
 stores everything on your phone. No accounts or backend; data leaves the device
 only when you explicitly export or share it.
 

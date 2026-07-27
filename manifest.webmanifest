@@ -1,6 +1,6 @@
 {
-  "name": "AVL Site Survey",
-  "short_name": "AVL Survey",
+  "name": "Preplot",
+  "short_name": "Preplot",
   "description": "Pre-install AV site survey checklist with ambient light and display sizing calculations.",
   "start_url": "./index.html",
   "scope": "./",

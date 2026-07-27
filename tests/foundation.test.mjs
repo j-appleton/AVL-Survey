@@ -18,6 +18,10 @@ var PACKAGE_VERSION = JSON.parse(
 var PACKAGE_LOCK = JSON.parse(
   await readFile(join(ROOT, "package-lock.json"), "utf8")
 );
+var MANIFEST = JSON.parse(
+  await readFile(join(ROOT, "manifest.webmanifest"), "utf8")
+);
+var INDEX_SOURCE = await readFile(join(ROOT, "index.html"), "utf8");
 
 test("data migrations, validation, backup, salvage, and storage warnings", async function(){
   var server = await serve(ROOT);
@@ -35,6 +39,22 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
     assert.deepEqual(versions, {app:PACKAGE_VERSION, schema:3});
     assert.equal(PACKAGE_LOCK.version, PACKAGE_VERSION);
     assert.equal(PACKAGE_LOCK.packages[""].version, PACKAGE_VERSION);
+
+    var branding = await page.evaluate(function(){
+      return {
+        title:document.title,
+        heading:document.querySelector("header h1").textContent.trim(),
+        apple:document.querySelector('meta[name="apple-mobile-web-app-title"]').content,
+        subtitle:document.getElementById("hdsub")
+      };
+    });
+    assert.equal(MANIFEST.name,MANIFEST.short_name);
+    assert.equal(branding.title,MANIFEST.name);
+    assert.equal(branding.heading,MANIFEST.name);
+    assert.equal(branding.apple,MANIFEST.name);
+    assert.equal(branding.subtitle,null,"the old header subtitle must be removed, not emptied");
+    assert.match(INDEX_SOURCE,/<h1>AV Pre-Install Site Survey<\/h1>/);
+    assert.match(INDEX_SOURCE,/Prepared with Preplot/);
 
     var migration = await page.evaluate(function(payload){
       return window.__avl.migrate(payload);

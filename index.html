@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>AVL Site Survey</title>
+<title>Preplot</title>
 
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./favicon.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="AVL Survey">
+<meta name="apple-mobile-web-app-title" content="Preplot">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="format-detection" content="telephone=no">
 <style>
@@ -274,7 +274,7 @@ button.btn:active{transform:translateY(1px)}
 <header>
   <div class="hd">
     <div style="flex:1">
-      <h1>AVL Site Survey <span class="sub" id="hdsub">Pre-install walkthrough</span></h1>
+      <h1>Preplot</h1>
     </div>
     <span class="corechip" id="corechip">core 0/0</span>
   </div>
@@ -2742,9 +2742,6 @@ function updateProgress(){
   var chip = document.getElementById("corechip");
   chip.textContent = "core " + cd + "/" + c;
   chip.className = "corechip" + (c > 0 && cd === c ? " done" : "");
-  document.getElementById("hdsub").textContent =
-    S.rooms.length ? (S.rooms.length + (S.rooms.length === 1 ? " room" : " rooms") + " &middot; " + d + " fields captured").replace("&middot;","·")
-                   : "Pre-install walkthrough";
   S.rooms.forEach(function(r){
     var el = document.querySelector('[data-pct="' + r.id + '"]');
     if(el){ var p = progress(r.id); el.textContent = p.coreDone + "/" + p.core + " core"; }
@@ -3602,9 +3599,10 @@ function printPhotos(key){
 
 function buildPrintNow(){
   var h = "";
-  h += '<h1>AVL Pre-Install Site Survey</h1>';
+  h += '<h1>AV Pre-Install Site Survey</h1>';
   h += '<div class="meta">' + esc(S.visit.client || "—") + ' &middot; ' + esc(S.visit.site || "—") +
-       ' &middot; ' + esc(S.visit.date || "—") + ' &middot; Surveyor: ' + esc(S.visit.surveyor || "—") + '</div>';
+       ' &middot; ' + esc(S.visit.date || "—") + ' &middot; Surveyor: ' + esc(S.visit.surveyor || "—") +
+       ' &middot; Prepared with Preplot</div>';
   h += '<h2>Visit details</h2>' + tableFor("visit", VISIT);
   if(!S.skipped["log|main"]){
     var logT = tableFor("log", LOGISTICS), logP = printPhotos("log|main");
