@@ -48,7 +48,8 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
         subtitle:document.getElementById("hdsub")
       };
     });
-    assert.equal(MANIFEST.name,MANIFEST.short_name);
+    assert.equal(MANIFEST.name,"Preplot");
+    assert.equal(MANIFEST.short_name,"Preplot");
     assert.equal(branding.title,MANIFEST.name);
     assert.equal(branding.heading,MANIFEST.name);
     assert.equal(branding.apple,MANIFEST.name);
@@ -61,7 +62,7 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
     }, LEGACY_V1);
     assert.equal(migration.ok, true);
     assert.equal(migration.from, 1);
-    assert.equal(migration.data.meta.migratedFrom, 2);
+    assert.equal(migration.data.meta.migratedFrom, 1);
     assert.equal(migration.data.rooms[0].d.name, "Legacy room");
 
     var schema2Migration = await page.evaluate(function(){

@@ -311,6 +311,89 @@ test("a field save cannot persist a descriptor before storage readback verifies 
   });
 });
 
+test("a hung compressor times out and cannot leave autosave disabled", async function(){
+  await withCaptureApp(async function(page){
+    var result = await page.evaluate(async function(){
+      window.__avl.persistSurvey();
+      window.__avl.setPhotoCompressTimeoutForTest(40);
+      window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"never-finishes"}],
+        function(){}
+      );
+      await new Promise(function(resolve){ setTimeout(resolve,100); });
+      var afterTimeout = window.__avl.photoStoreStatus();
+
+      var field = document.querySelector('[data-scope="visit"][data-k="client"]');
+      field.value = "Autosave survived";
+      field.dispatchEvent(new Event("input",{bubbles:true}));
+      await new Promise(function(resolve){ setTimeout(resolve,350); });
+      return {
+        status:afterTimeout,
+        durableClient:JSON.parse(window.__avl.raw()).data.visit.client,
+        toast:document.getElementById("toast").textContent
+      };
+    });
+
+    assert.equal(result.status.pending,0,
+      "the timed-out file must leave no permanently pending capture");
+    assert.equal(result.durableClient,"Autosave survived",
+      "field autosave must resume after the timeout");
+    assert.equal(result.toast,"Could not add that photo.");
+  });
+});
+
+test("a rejected batch cannot poison the shared capture flight", async function(){
+  await withCaptureApp(async function(page){
+    var result = await page.evaluate(async function(){
+      var bar = document.getElementById("bar");
+      var parent = bar.parentNode;
+      var nextSibling = bar.nextSibling;
+      parent.removeChild(bar);
+      var firstRejected = false;
+      try {
+        await window.__avl.processPhotoBatchForTest(
+          "1|notes",
+          [{name:"first"}],
+          function(file,done){
+            done("data:image/jpeg;base64,AQ==",{width:10,height:10});
+          }
+        );
+      } catch(error){
+        firstRejected = true;
+      }
+      var idleResolved = true;
+      try { await window.__avl.photoCaptureIdle(); }
+      catch(error){ idleResolved = false; }
+      parent.insertBefore(bar,nextSibling);
+
+      var second = await window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"second"}],
+        function(file,done){
+          done("data:image/jpeg;base64,Ag==",{width:10,height:10});
+        }
+      );
+      await window.__avl.photoCaptureIdle();
+      return {
+        firstRejected:firstRejected,
+        idleResolved:idleResolved,
+        second:second,
+        count:window.__avl.S().photos["1|notes"].length,
+        pending:window.__avl.photoStoreStatus().pending
+      };
+    });
+
+    assert.equal(result.firstRejected,true,"the test must force the first batch to reject");
+    assert.equal(result.idleResolved,true,
+      "the shared flight itself must absorb the rejection before another capture starts");
+    assert.equal(result.second.added,1,
+      "the next batch must run instead of inheriting the previous rejection");
+    assert.equal(result.count,2);
+    assert.equal(result.pending,0);
+  });
+});
+
 test("a partial batch reports the processed and failed counts once", async function(){
   await withCaptureApp(async function(page){
     var result = await page.evaluate(async function(){
