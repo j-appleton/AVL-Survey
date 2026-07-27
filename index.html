@@ -3324,9 +3324,12 @@ function processPhotoBatch(key, files, compressor){
 }
 
 function queuePhotoBatch(key, files, compressor){
-  var work = function(){ return processPhotoBatch(key,files,compressor); };
-  photoCaptureFlight = photoCaptureFlight.then(work,work);
-  return photoCaptureFlight;
+  var run = function(){ return processPhotoBatch(key,files,compressor); };
+  /* The shared flight must never latch rejected. A failed batch cannot
+     disable every capture that follows it. */
+  var result = photoCaptureFlight.then(run,run);
+  photoCaptureFlight = result.catch(function(){});
+  return result;
 }
 
 function photoCaptureIdle(){
