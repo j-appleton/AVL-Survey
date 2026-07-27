@@ -42,7 +42,7 @@ async function capture(page, name, width, height, color){
     mimeType:"image/svg+xml",
     buffer:Buffer.from(svg)
   });
-  await page.waitForSelector(".phviewer");
+  await page.evaluate(function(){ return window.__avl.photoCaptureIdle(); });
   await page.evaluate(function(){ return window.__avl.photoStoreIdle(); });
 }
 
@@ -142,12 +142,7 @@ test("new captures dual-write exact blobs with stable IDs while schema-v2 reads 
     assert.equal(imported, true);
 
     await capture(page, "portrait.svg", 40, 60, "purple");
-    await page.locator("[data-phv-close]").click();
     await capture(page, "landscape.svg", 70, 30, "teal");
-    await page.waitForFunction(function(){
-      var image = document.querySelector(".phvimage");
-      return image && /^blob:/.test(image.getAttribute("src") || "");
-    });
 
     var result = await page.evaluate(async function(){
       var records = await window.AVLPhotoStore.all();
@@ -244,13 +239,12 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
       };
     });
     await capture(page, "fallback.svg", 32, 48, "orange");
-    await page.waitForFunction(function(){
-      var image = document.querySelector(".phvimage");
-      return image && /^blob:/.test(image.getAttribute("src") || "");
-    });
 
     var result = await page.evaluate(async function(){
       var durable = JSON.parse(window.__avl.raw());
+      window.__avl.openPhotoViewer("1|notes",0);
+      await window.__avl.hydratePhotoSource("1|notes",0);
+      await new Promise(function(resolve){ setTimeout(resolve,0); });
       var viewerResponse = await fetch(document.querySelector(".phvimage").src);
       return {
         memory:window.__avl.S().photos["1|notes"].slice(),

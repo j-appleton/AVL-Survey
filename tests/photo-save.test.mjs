@@ -351,7 +351,7 @@ test("Save photo prepares the local File and opens the native share path offline
   });
 });
 
-test("capture opens the saved survey copy with a large manual Save photo action", async function(){
+test("capture stays in the survey and the stored photo remains manually shareable", async function(){
   await withPhotoApp({photo:null}, async function(page){
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="60">' +
       '<rect width="40" height="60" fill="purple"/></svg>';
@@ -363,36 +363,44 @@ test("capture opens the saved survey copy with a large manual Save photo action"
       mimeType:"image/svg+xml",
       buffer:Buffer.from(svg)
     });
-    await page.waitForSelector(".phviewer");
-    await page.waitForFunction(function(){
-      var image = document.querySelector(".phvimage");
-      return image && image.complete && image.naturalWidth > 0;
-    });
+    await page.evaluate(function(){ return window.__avl.photoCaptureIdle(); });
 
     var captured = await page.evaluate(function(){
-      var image = document.querySelector(".phvimage");
       var raw = window.__avl.raw();
       return {
         count:(window.__avl.S().photos["1|notes"] || []).length,
         persisted:raw ? (JSON.parse(raw).data.photos["1|notes"] || []).length : 0,
         stored:(window.__avl.S().photos["1|notes"] || [""])[0].slice(0,23),
-        dimensions:[image.naturalWidth,image.naturalHeight],
-        notice:document.querySelector(".phvhelp").textContent,
-        saveText:document.querySelector("[data-phv-save]").textContent,
-        saveWidth:document.querySelector("[data-phv-save]").getBoundingClientRect().width,
+        viewer:!!document.querySelector(".phviewer"),
+        thumbnails:document.querySelectorAll('[data-photos="1|notes"] [data-viewph]').length,
+        toast:document.getElementById("toast").textContent,
         shareCalls:window.__shareCalls.length
       };
     });
     assert.equal(captured.count, 1);
-    assert.equal(captured.persisted, 1, "capture must persist before the viewer opens");
+    assert.equal(captured.persisted, 1, "capture must persist before it is reported as added");
     assert.equal(captured.stored, "data:image/jpeg;base64,");
-    assert.deepEqual(captured.dimensions, [40,60]);
-    assert.match(captured.notice, /Photo added to the survey/i);
-    assert.match(captured.notice, /900px/i);
-    assert.match(captured.notice, /metadata is removed/i);
-    assert.equal(captured.saveText, "Save photo\u2026");
-    assert.ok(captured.saveWidth >= 300, "post-capture Save photo must be a prominent phone control");
+    assert.equal(captured.viewer, false, "successful capture must not interrupt the survey with the viewer");
+    assert.equal(captured.thumbnails, 1);
+    assert.equal(captured.toast, "Photo added.");
     assert.equal(captured.shareCalls, 0, "capture cannot open the share sheet without a second user tap");
+
+    await page.locator('[data-photos="1|notes"] [data-viewph]').click();
+    await page.waitForFunction(function(){
+      var button = document.querySelector("[data-phv-save]");
+      return button && !button.disabled;
+    });
+    var viewer = await page.evaluate(function(){
+      var image = document.querySelector(".phvimage");
+      return {
+        dimensions:[image.naturalWidth,image.naturalHeight],
+        saveText:document.querySelector("[data-phv-save]").textContent,
+        saveWidth:document.querySelector("[data-phv-save]").getBoundingClientRect().width
+      };
+    });
+    assert.deepEqual(viewer.dimensions, [40,60]);
+    assert.equal(viewer.saveText, "Save photo\u2026");
+    assert.ok(viewer.saveWidth >= 300, "Save photo must remain a prominent phone control");
 
     await page.locator("[data-phv-save]").click();
     assert.equal(await page.evaluate(function(){ return window.__shareCalls.length; }), 1);
@@ -410,28 +418,23 @@ test("capture opens the saved survey copy with a large manual Save photo action"
       mimeType:"image/svg+xml",
       buffer:Buffer.from(landscape)
     });
-    await page.waitForSelector(".phviewer");
-    await page.waitForFunction(function(){
-      var image = document.querySelector(".phvimage");
-      return image && image.complete && image.naturalWidth === 60;
-    });
+    await page.evaluate(function(){ return window.__avl.photoCaptureIdle(); });
     var repeated = await page.evaluate(function(){
-      var image = document.querySelector(".phvimage");
       return {
         count:window.__avl.S().photos["1|notes"].length,
-        counter:document.querySelector(".phvtop .phvcount").textContent,
-        dimensions:[image.naturalWidth,image.naturalHeight],
+        viewer:!!document.querySelector(".phviewer"),
+        toast:document.getElementById("toast").textContent,
         shareCalls:window.__shareCalls.length
       };
     });
     assert.equal(repeated.count, 2);
-    assert.equal(repeated.counter, "Photo 2 of 2");
-    assert.deepEqual(repeated.dimensions, [60,40]);
+    assert.equal(repeated.viewer, false);
+    assert.equal(repeated.toast, "Photo added.");
     assert.equal(repeated.shareCalls, 1, "the second capture must still wait for an explicit save tap");
   });
 });
 
-test("a storage-full capture stays shareable and warns inside the viewer", async function(){
+test("a storage-full capture stays shareable through a persistent section notice", async function(){
   await withPhotoApp({photo:null}, async function(page){
     await page.waitForTimeout(300);
     await page.evaluate(function(){
@@ -452,25 +455,40 @@ test("a storage-full capture stays shareable and warns inside the viewer", async
       mimeType:"image/svg+xml",
       buffer:Buffer.from(svg)
     });
-    await page.waitForSelector(".phviewer");
+    await page.evaluate(function(){ return window.__avl.photoCaptureIdle(); });
 
     var result = await page.evaluate(function(){
       var durable = JSON.parse(window.__avl.raw());
       return {
         memoryCount:window.__avl.S().photos["1|notes"].length,
         durableCount:(durable.data.photos["1|notes"] || []).length,
-        notice:document.querySelector(".phvhelp").textContent,
-        saveText:document.querySelector("[data-phv-save]").textContent,
+        viewer:!!document.querySelector(".phviewer"),
+        notices:document.querySelectorAll('[data-photo-recovery="1|notes"]').length,
+        notice:document.querySelector('[data-photo-recovery="1|notes"]').textContent,
+        dismiss:document.querySelectorAll('[data-photo-recovery="1|notes"] [data-dismiss]').length,
         shareCalls:window.__shareCalls.length
       };
     });
     assert.equal(result.memoryCount, 1, "the image must remain available in this session");
     assert.equal(result.durableCount, 0, "the test must prove storage actually rejected the photo");
-    assert.match(result.notice, /survey storage is full/i);
-    assert.match(result.notice, /Save a copy and export the survey before closing/i);
-    assert.equal(result.saveText, "Save photo\u2026");
+    assert.equal(result.viewer, false, "storage failure must not interrupt a capture batch");
+    assert.equal(result.notices, 1);
+    assert.match(result.notice, /available now but could not be added to the survey/i);
+    assert.match(result.notice, /Save it before leaving this page/i);
+    assert.equal(result.dismiss, 0, "the recovery notice must not be dismissible");
     assert.equal(result.shareCalls, 0);
 
+    await page.locator('[data-toggle="visit|main"]').click();
+    assert.equal(
+      await page.locator('[data-photo-recovery="1|notes"]').count(),
+      1,
+      "the recovery notice must survive a wholesale survey re-render"
+    );
+    await page.locator('[data-photo-recovery="1|notes"] [data-recoverph]').click();
+    await page.waitForFunction(function(){
+      var button = document.querySelector("[data-phv-save]");
+      return button && !button.disabled;
+    });
     await page.locator("[data-phv-save]").click();
     assert.equal(
       await page.evaluate(function(){ return window.__shareCalls.length; }),
