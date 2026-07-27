@@ -311,6 +311,38 @@ test("a field save cannot persist a descriptor before storage readback verifies 
   });
 });
 
+test("a hung compressor times out and cannot leave autosave disabled", async function(){
+  await withCaptureApp(async function(page){
+    var result = await page.evaluate(async function(){
+      window.__avl.persistSurvey();
+      window.__avl.setPhotoCompressTimeoutForTest(40);
+      window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"never-finishes"}],
+        function(){}
+      );
+      await new Promise(function(resolve){ setTimeout(resolve,100); });
+      var afterTimeout = window.__avl.photoStoreStatus();
+
+      var field = document.querySelector('[data-scope="visit"][data-k="client"]');
+      field.value = "Autosave survived";
+      field.dispatchEvent(new Event("input",{bubbles:true}));
+      await new Promise(function(resolve){ setTimeout(resolve,350); });
+      return {
+        status:afterTimeout,
+        durableClient:JSON.parse(window.__avl.raw()).data.visit.client,
+        toast:document.getElementById("toast").textContent
+      };
+    });
+
+    assert.equal(result.status.pending,0,
+      "the timed-out file must leave no permanently pending capture");
+    assert.equal(result.durableClient,"Autosave survived",
+      "field autosave must resume after the timeout");
+    assert.equal(result.toast,"Could not add that photo.");
+  });
+});
+
 test("a partial batch reports the processed and failed counts once", async function(){
   await withCaptureApp(async function(page){
     var result = await page.evaluate(async function(){

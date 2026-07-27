@@ -532,15 +532,66 @@ test("portable import abandons the whole file to inline photos after a storage w
         ok:ok,
         calls:calls,
         photos:window.__avl.S().photos["1|notes"],
-        records:records.length
+        records:records.map(function(record){ return record.id; }),
+        orphans:window.__avl.orphanedPhotoIds()
       };
     },payload);
     assert.equal(result.ok,true);
     assert.equal(result.calls,2);
     assert.deepEqual(result.photos,[A_DATA,B_DATA],
       "a portable import must never leave a half-descriptor survey");
-    assert.equal(result.records,1,
+    assert.equal(result.records.length,1,
       "the successful pre-flight record is the import's one allowed orphan");
+    assert.deepEqual(result.orphans,result.records);
+  });
+});
+
+test("portable import reads the probe back before entering the descriptor lane", async function(){
+  await withApp(async function(page){
+    var payload = {
+      app:"avl-survey",
+      schema:3,
+      photoFormat:"inline",
+      data:stateWithPhotos([
+        {mime:"image/jpeg",width:2,height:3,bytes:A_BYTES.length,data:A_DATA},
+        {mime:"image/png",width:4,height:5,bytes:B_BYTES.length,data:B_DATA}
+      ],false)
+    };
+    var result = await page.evaluate(async function(input){
+      await window.AVLPhotoStore.clear();
+      var realGet = window.AVLPhotoStore.get;
+      var getCalls = 0;
+      var batchCalls = 0;
+      window.AVLPhotoStore.get = function(id){
+        getCalls++;
+        return realGet(id).then(function(record){
+          record.blob = new Blob([new Uint8Array([0])],{type:record.mime});
+          return record;
+        });
+      };
+      window.AVLPhotoStore.addDataUrls = function(){
+        batchCalls++;
+        return Promise.reject(new Error("must not enter batch lane"));
+      };
+      var ok = await window.__avl.applyImport(JSON.stringify(input));
+      var records = await window.AVLPhotoStore.all();
+      return {
+        ok:ok,
+        getCalls:getCalls,
+        batchCalls:batchCalls,
+        photos:window.__avl.S().photos["1|notes"],
+        records:records.map(function(record){ return record.id; }),
+        orphans:window.__avl.orphanedPhotoIds()
+      };
+    },payload);
+
+    assert.equal(result.ok,true);
+    assert.equal(result.getCalls,1,"the probe must cross a real store.get readback");
+    assert.equal(result.batchCalls,0,"failed probe verification must block the descriptor batch");
+    assert.deepEqual(result.photos,[A_DATA,B_DATA]);
+    assert.equal(result.records.length,1);
+    assert.deepEqual(result.orphans,result.records,
+      "the failed probe must remain identifiable as the import's one orphan");
   });
 });
 

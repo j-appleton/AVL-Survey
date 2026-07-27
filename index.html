@@ -519,7 +519,7 @@ var MIGRATIONS = {
   },
   2: function(d){
     d.meta = d.meta || {};
-    d.meta.migratedFrom = 2;
+    if(typeof d.meta.migratedFrom === "undefined") d.meta.migratedFrom = 2;
     return d;
   }
 };
@@ -3001,6 +3001,14 @@ var photoTarget = null;
 var photoStoreLastError = "";
 var photoStoreFailureKind = "";
 var photoCaptureFlight = Promise.resolve();
+var photoCapturePendingCount = 0;
+var photoCompressTimeoutMs = 15000;
+var orphanedPhotoIds = [];
+
+function rememberOrphanedPhotoId(id){
+  id = String(id || "");
+  if(id && orphanedPhotoIds.indexOf(id) < 0) orphanedPhotoIds.push(id);
+}
 
 function activePhotoCaptureRecoveries(key){
   var list = photoList(key);
@@ -3077,9 +3085,10 @@ function photoStoreIdle(){
 
 function photoStoreStatus(){
   return {
-    pending:photoCaptureCritical ? 1 : 0,
+    pending:photoCapturePendingCount,
     lastError:photoStoreLastError,
-    kind:photoStoreFailureKind
+    kind:photoStoreFailureKind,
+    orphaned:orphanedPhotoIds.slice()
   };
 }
 
@@ -3157,6 +3166,7 @@ function fallBackAfterStoredRecord(batch, descriptor, dataUrl, error){
   var index = list.indexOf(descriptor);
   if(index > -1) list.splice(index,1);
   delete missingPhotoIds[descriptor.id];
+  rememberOrphanedPhotoId(descriptor.id);
   batch.storageDegraded = true;
   batch.orphans++;
   setPhotoStoreFailure("verify",error);
@@ -3195,6 +3205,7 @@ function storeCapturedPhoto(batch, dataUrl, dimensions){
     catch(error){
       batch.storageDegraded = true;
       batch.orphans++;
+      if(record && record.id) rememberOrphanedPhotoId(record.id);
       setPhotoStoreFailure("verify",error);
       appendInlineCapture(batch,dataUrl);
       return;
@@ -3237,10 +3248,12 @@ function processPhotoBatch(key, files, compressor){
     photoCaptureSaveSuppressed = true;
   }
   photoCaptureCritical = true;
+  photoCapturePendingCount = batch.files.length;
 
   function next(){
     if(batch.index >= batch.files.length){
       photoCaptureCritical = false;
+      photoCapturePendingCount = 0;
       if(photoCaptureSaveSuppressed){
         photoCaptureSaveSuppressed = false;
         if(batch.added.length){
@@ -3268,26 +3281,46 @@ function processPhotoBatch(key, files, compressor){
 
     var file = batch.files[batch.index++];
     return new Promise(function(resolve){
+      var settled = false;
+      var guard = setTimeout(function(){
+        finish(null,true);
+      },photoCompressTimeoutMs);
+      function finish(value,failed){
+        if(settled) return;
+        settled = true;
+        clearTimeout(guard);
+        if(failed) batch.failed++;
+        resolve(value);
+      }
       try {
         runCompressor(file, function(dataUrl, dimensions){
           if(dataUrl){
-            resolve({dataUrl:dataUrl,dimensions:dimensions});
+            finish({dataUrl:dataUrl,dimensions:dimensions},false);
           } else {
-            batch.failed++;
-            resolve(null);
+            finish(null,true);
           }
         });
       } catch(error){
-        batch.failed++;
-        resolve(null);
+        finish(null,true);
       }
     }).then(function(result){
       if(!result) return;
       return storeCapturedPhoto(batch,result.dataUrl,result.dimensions);
-    }).then(next);
+    }).then(function(){
+      photoCapturePendingCount = Math.max(0,photoCapturePendingCount - 1);
+      return next();
+    });
   }
 
-  return next();
+  return next().catch(function(error){
+    photoCaptureCritical = false;
+    photoCapturePendingCount = 0;
+    if(photoCaptureSaveSuppressed){
+      photoCaptureSaveSuppressed = false;
+      save();
+    }
+    throw error;
+  });
 }
 
 function queuePhotoBatch(key, files, compressor){
@@ -3431,11 +3464,22 @@ function portableImportState(payload, useDescriptors){
   }
 
   var records = [];
+  var probeId = "";
   var chain = Promise.resolve();
+  function verifyPortableRecord(record,job){
+    var descriptor = descriptorFromPhotoRecord(record);
+    if(record.blob.size !== descriptor.bytes ||
+       descriptor.bytes !== job.value.bytes ||
+       descriptor.mime !== job.value.mime.toLowerCase()){
+      throw new Error("Photo storage verification failed");
+    }
+    return record;
+  }
   if(jobs.length){
     chain = chain.then(function(){
       if(!window.AVLPhotoStore ||
          typeof window.AVLPhotoStore.addDataUrl !== "function" ||
+         typeof window.AVLPhotoStore.get !== "function" ||
          (jobs.length > 1 && typeof window.AVLPhotoStore.addDataUrls !== "function")){
         throw new Error("Photo storage is unavailable");
       }
@@ -3445,6 +3489,15 @@ function portableImportState(payload, useDescriptors){
         jobs[0].value.height
       );
     }).then(function(record){
+      if(record && record.id) probeId = record.id;
+      verifyPortableRecord(record,jobs[0]);
+      var read;
+      try { read = window.AVLPhotoStore.get(probeId); }
+      catch(error){ read = Promise.reject(error); }
+      return Promise.resolve(read);
+    }).then(function(record){
+      if(!record || record.id !== probeId) throw new Error("Photo storage verification failed");
+      verifyPortableRecord(record,jobs[0]);
       records.push({job:jobs[0],record:record});
       if(jobs.length === 1) return [];
       return window.AVLPhotoStore.addDataUrls(jobs.slice(1).map(function(job){
@@ -3466,12 +3519,7 @@ function portableImportState(payload, useDescriptors){
   return chain.then(function(){
     var seen = {};
     records.forEach(function(item){
-      var descriptor = descriptorFromPhotoRecord(item.record);
-      if(item.record.blob.size !== descriptor.bytes ||
-         descriptor.bytes !== item.job.value.bytes ||
-         descriptor.mime !== item.job.value.mime.toLowerCase()){
-        throw new Error("Photo storage verification failed");
-      }
+      var descriptor = descriptorFromPhotoRecord(verifyPortableRecord(item.record,item.job));
       if(seen[descriptor.id]) throw new Error("Photo storage returned a duplicate id");
       seen[descriptor.id] = true;
       data.photos[item.job.key].push(descriptor);
@@ -3480,6 +3528,10 @@ function portableImportState(payload, useDescriptors){
     if(!result.ok) throw new Error(result.reason);
     return coerce(data);
   }).catch(function(){
+    if(probeId) rememberOrphanedPhotoId(probeId);
+    records.forEach(function(item){
+      if(item.record && item.record.id) rememberOrphanedPhotoId(item.record.id);
+    });
     Object.keys(data.photos).forEach(function(key){ data.photos[key] = []; });
     jobs.forEach(function(job){ data.photos[job.key].push(job.value.data); });
     return coerce(data);
@@ -3899,6 +3951,10 @@ window.__avl = {
   photoStoreIdle:photoStoreIdle,
   photoStoreStatus:photoStoreStatus,
   photoCaptureIdle:photoCaptureIdle,
+  setPhotoCompressTimeoutForTest:function(ms){
+    photoCompressTimeoutMs = Math.max(1,parseInt(ms,10) || 15000);
+  },
+  orphanedPhotoIds:function(){ return orphanedPhotoIds.slice(); },
   processPhotoBatchForTest:function(key,files,compressor){
     return queuePhotoBatch(key,files,compressor);
   },

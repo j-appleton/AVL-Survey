@@ -256,7 +256,7 @@ test("new captures persist authoritative descriptors built from exact stored rec
     })[0];
     assert.deepEqual(result.viewerBytes,firstRecord.payload);
     assert.equal(result.readCalls, 0, "capture verification must leave the current photo resident");
-    assert.deepEqual(result.storeStatus, {pending:0,lastError:"",kind:""});
+    assert.deepEqual(result.storeStatus, {pending:0,lastError:"",kind:"",orphaned:[]});
   });
 });
 
@@ -311,6 +311,7 @@ test("an IndexedDB add failure falls back inline and creates no orphan record", 
     assert.match(result.status.lastError, /Injected IndexedDB failure/);
     assert.equal(result.status.kind,"add");
     assert.equal(result.status.pending, 0);
+    assert.deepEqual(result.status.orphaned,[]);
     assert.equal(
       result.toast,
       "Photo added. 1 is stored in the survey file rather than device storage.",
@@ -421,6 +422,7 @@ test("failed readback leaves one orphan, falls back inline and degrades the rest
         memory:window.__avl.S().photos["1|notes"].slice(),
         durable:JSON.parse(window.__avl.raw()).data.photos["1|notes"],
         records:records.length,
+        recordId:records[0] && records[0].id,
         status:window.__avl.photoStoreStatus(),
         toast:document.getElementById("toast").textContent
       };
@@ -428,6 +430,11 @@ test("failed readback leaves one orphan, falls back inline and degrades the rest
 
     assert.equal(result.addCalls,1,"the batch must stop trusting storage after failed verification");
     assert.equal(result.records,1,"the failed record remains as the one allowed orphan");
+    assert.deepEqual(result.status.orphaned,[result.recordId],
+      "the orphan ID must remain available for future reclamation");
+    assert.deepEqual(result.status.orphaned,await page.evaluate(function(){
+      return window.__avl.orphanedPhotoIds();
+    }));
     assert.equal(result.batch.orphans,1);
     assert.equal(result.batch.inlineFallbacks,2);
     assert.deepEqual(result.memory,[
