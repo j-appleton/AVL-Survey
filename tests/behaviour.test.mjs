@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { launchBrowser, serve, surveyStateSnapshot } from "./app-test-helpers.mjs";
+import { launchBrowser, serve, surveyStateSnapshot, until } from "./app-test-helpers.mjs";
 
 var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -443,6 +443,83 @@ test("photo hydration fills placeholders in place without re-rendering the surve
     });
     assert.equal(hydrated.sameNodes,true,"hydration must update the existing thumbnails, not re-render the app");
     assert.equal(hydrated.ready,true);
+  });
+});
+
+/* The PR's stated safety mechanism is that a cache entry retains its source, so
+   a shifted index cannot hand back the previous photo's Blob. Today that is
+   belt-and-braces with reconcilePhotoAssets() at render, but the belt itself was
+   untested and B2 makes materialisation a real IndexedDB round-trip, which
+   weakens the render coupling that is currently covering for it. */
+test("a shifted index never resolves to the previous photo's Blob", async function(){
+  await withApp(null, async function(page){
+    var photos = await importPhotos(page,"Index shift");
+
+    var result = await page.evaluate(async function(sources){
+      function bytesOf(dataUrl){
+        var payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
+        var text = dataUrl.indexOf(";base64,") > -1 ? atob(payload) : decodeURIComponent(payload);
+        var out = [];
+        for(var i=0;i<text.length;i++) out.push(text.charCodeAt(i));
+        return out;
+      }
+      async function bytesBehind(key,index){
+        var loaded = await window.__avl.hydratePhotoSource(key,index);
+        var buffer = await loaded.blob.arrayBuffer();
+        return Array.prototype.slice.call(new Uint8Array(buffer));
+      }
+
+      /* hydrate every photo so a stale entry exists at each token */
+      await bytesBehind("1|notes",0);
+      await bytesBehind("1|notes",1);
+      await bytesBehind("1|notes",2);
+
+      /* shift indices without an intervening render, which is the state B2
+         reaches whenever hydration outlives the render that started it */
+      window.__avl.S().photos["1|notes"].splice(0,1);
+
+      return {
+        atZero:await bytesBehind("1|notes",0),
+        atOne:await bytesBehind("1|notes",1),
+        expectedZero:bytesOf(sources[1]),
+        expectedOne:bytesOf(sources[2]),
+        removed:bytesOf(sources[0])
+      };
+    }, photos);
+
+    assert.deepEqual(result.atZero,result.expectedZero,
+      "index 0 must resolve to the photo that shifted into it");
+    assert.notDeepEqual(result.atZero,result.removed,
+      "index 0 must never resolve to the deleted photo's Blob");
+    assert.deepEqual(result.atOne,result.expectedOne,
+      "index 1 must resolve to the photo that shifted into it");
+  });
+});
+
+/* The print sheet is a photo consumer like any other. Under schema 3 there will
+   be no data URL to embed, so a regression here fails outright rather than
+   quietly shipping megabytes of base64 into the print DOM. */
+test("the print sheet renders photos through the seam rather than embedding data URLs", async function(){
+  await withApp(async function(page){
+    await page.addInitScript(function(){
+      window.__printCalls = 0;
+      window.print = function(){ window.__printCalls++; };
+    });
+  }, async function(page){
+    await importPhotos(page,"Print seam");
+    await page.locator("#pdf").click();
+    await until(async function(){
+      return page.evaluate(function(){ return window.__printCalls > 0; });
+    });
+    var printed = await page.evaluate(function(){
+      var html = document.getElementById("print").innerHTML;
+      return {
+        dataUrls:(html.match(/src="data:/g) || []).length,
+        blobUrls:(html.match(/src="blob:/g) || []).length
+      };
+    });
+    assert.equal(printed.dataUrls,0,"the print sheet must not embed data URLs");
+    assert.equal(printed.blobUrls,3,"every photo must print through an object URL");
   });
 });
 
