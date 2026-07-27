@@ -260,4 +260,6 @@ selections sequentially, preserving the order that flows into the manifest, ZIP
 and PDF. A capture batch renders and reports once. If local survey persistence
 fails, an undismissable section notice keeps every in-memory photo reachable
 through its manual Save action. Schema v2 and the existing dual-write storage
-authority remain unchanged.
+authority remain unchanged. If the temporary device-storage mirror fails, the
+Data & storage panel keeps the export warning visible instead of letting the
+batch summary overwrite it.

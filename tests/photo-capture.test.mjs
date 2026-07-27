@@ -104,6 +104,137 @@ test("a photo batch preserves selection order, renders once and reports once", a
   });
 });
 
+/* Selection order is only useful if it reaches the artefacts a client sees.
+   The manifest is what names files in the ZIP and numbers photos in the PDF,
+   and it derives from array position -- so this holds today by construction.
+   Construction is exactly what a later refactor changes. */
+test("selection order reaches photoManifest, not just the survey array", async function(){
+  await withCaptureApp(async function(page){
+    var manifest = await page.evaluate(async function(){
+      var sources = {
+        first:"data:image/jpeg;base64,AQ==",
+        second:"data:image/jpeg;base64,AgM=",
+        third:"data:image/jpeg;base64,BAUG"
+      };
+      /* the first file compresses slowest, so completion order is reversed */
+      var delays = {first:40,second:15,third:1};
+      await window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"first"},{name:"second"},{name:"third"}],
+        function(file,done){
+          setTimeout(function(){ done(sources[file.name],{width:10,height:10}); },delays[file.name]);
+        }
+      );
+      return window.__avl.photoManifest().map(function(entry){
+        return {ref:entry.ref, filename:entry.filename, bytes:entry.bytes};
+      });
+    });
+    assert.deepEqual(manifest.map(function(e){ return e.ref; }),["001","002","003"]);
+    assert.deepEqual(
+      manifest.map(function(e){ return e.filename; }),
+      ["001_R01_notes.jpg","002_R01_notes.jpg","003_R01_notes.jpg"]
+    );
+    /* one byte, two bytes, three bytes -- proves which source landed where */
+    assert.deepEqual(manifest.map(function(e){ return e.bytes; }),[1,2,3]);
+  });
+});
+
+/* The notice is derived from state on every render, which is what makes it
+   outlive a wholesale innerHTML rebuild. Nothing proved that it does. */
+test("the recovery notice is rebuilt by later renders and cannot be dismissed", async function(){
+  await withCaptureApp(async function(page){
+    var result = await page.evaluate(async function(){
+      window.__avl.setRaw("not-json-so-persist-cannot-succeed");
+      var realSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(){ throw new Error("quota"); };
+      try {
+        await window.__avl.processPhotoBatchForTest(
+          "1|notes",
+          [{name:"a"},{name:"b"}],
+          function(file,done){ done("data:image/jpeg;base64,AQ==",{width:10,height:10}); }
+        );
+      } finally {
+        Storage.prototype.setItem = realSet;
+      }
+      var first = document.querySelectorAll("[data-photo-recovery]").length;
+      var firstActions = document.querySelectorAll("[data-recoverph]").length;
+
+      /* remove it the way an impatient tap or a stray script would */
+      Array.prototype.forEach.call(
+        document.querySelectorAll("[data-photo-recovery]"),
+        function(node){ if(node.parentNode) node.parentNode.removeChild(node); }
+      );
+      var afterRemoval = document.querySelectorAll("[data-photo-recovery]").length;
+
+      /* any unrelated render must bring it back */
+      document.querySelector('[data-skip="1|dims"]').click();
+      return {
+        first:first,
+        firstActions:firstActions,
+        afterRemoval:afterRemoval,
+        afterRender:document.querySelectorAll("[data-photo-recovery]").length,
+        afterRenderActions:document.querySelectorAll("[data-recoverph]").length
+      };
+    });
+    assert.equal(result.first,1,"one notice for the batch");
+    assert.equal(result.firstActions,2,"one Save action per in-memory photo");
+    assert.equal(result.afterRemoval,0,"precondition: the node was removed");
+    assert.equal(result.afterRender,1,"a later render must rebuild it");
+    assert.equal(result.afterRenderActions,2,"and rebuild every Save action");
+  });
+});
+
+/* Recovery entries are coordinates into a live array. Deleting an earlier photo
+   shifts every later index, and a stale coordinate would offer to save the
+   wrong image -- or an image the surveyor already has safely. */
+test("recovery coordinates follow deletions and never attach to another photo", async function(){
+  await withCaptureApp(async function(page){
+    var result = await page.evaluate(async function(){
+      var realSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(){ throw new Error("quota"); };
+      try {
+        await window.__avl.processPhotoBatchForTest(
+          "1|notes",
+          [{name:"a"},{name:"b"},{name:"c"}],
+          function(file,done){
+            var map = {
+              a:"data:image/jpeg;base64,AQ==",
+              b:"data:image/jpeg;base64,Ag==",
+              c:"data:image/jpeg;base64,Aw=="
+            };
+            done(map[file.name],{width:10,height:10});
+          }
+        );
+      } finally {
+        Storage.prototype.setItem = realSet;
+      }
+      function labels(){
+        return Array.prototype.map.call(
+          document.querySelectorAll("[data-recoverph]"),
+          function(node){ return node.getAttribute("data-photo-index"); }
+        );
+      }
+      var before = labels();
+      /* delete the first photo through the production two-tap control */
+      var del = document.querySelector('[data-delph="0"]');
+      del.click(); del.click();
+      var after = labels();
+      return {
+        before:before,
+        after:after,
+        remaining:window.__avl.S().photos["1|notes"],
+        actions:after.length
+      };
+    });
+    assert.deepEqual(result.before,["0","1","2"]);
+    assert.deepEqual(result.remaining,
+      ["data:image/jpeg;base64,Ag==","data:image/jpeg;base64,Aw=="]);
+    assert.equal(result.actions,2,"the deleted photo drops its Save action");
+    assert.deepEqual(result.after,["0","1"],
+      "surviving coordinates must follow the shift, not point at the old slots");
+  });
+});
+
 test("capture clears a pending debounced save before the first photo is appended", async function(){
   await withCaptureApp(async function(page){
     var result = await page.evaluate(async function(){

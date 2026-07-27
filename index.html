@@ -844,6 +844,11 @@ function storageHTML(){
     h += '<div class="hint" style="margin-top:6px">Device storage used by this app (estimate): ' +
       fmtMB(deviceInfo.used) + '</div>';
   }
+  if(photoStoreLastError){
+    h += '<div class="flag" data-photo-store-warning style="margin-top:8px">' +
+      'Additional device photo storage is unavailable. This version will keep photos in the survey file. ' +
+      'Export this survey after the visit.</div>';
+  }
   var photoStorage = photoStorageCounts();
   if(photoStorage.descriptors){
     var storedCount = photoStorage.descriptors - photoStorage.missing;
@@ -2977,7 +2982,6 @@ document.addEventListener("click", function(e){
 var photoTarget = null;
 var photoStoreWrites = [];
 var photoStoreLastError = "";
-var photoStoreWarned = false;
 var photoCaptureFlight = Promise.resolve();
 
 function activePhotoCaptureRecoveries(key){
@@ -3045,10 +3049,7 @@ function mirrorPhotoToIndexedDB(dataUrl, dimensions){
     return record;
   }).catch(function(error){
     photoStoreLastError = error && error.message ? error.message : "Photo storage failed";
-    if(!photoStoreWarned){
-      photoStoreWarned = true;
-      toast("Additional photo storage unavailable — export this survey after the visit");
-    }
+    updateStorageBar();
     return null;
   });
   photoStoreWrites.push(tracked);

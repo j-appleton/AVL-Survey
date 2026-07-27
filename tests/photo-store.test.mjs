@@ -246,6 +246,7 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
       await window.__avl.hydratePhotoSource("1|notes",0);
       await new Promise(function(resolve){ setTimeout(resolve,0); });
       var viewerResponse = await fetch(document.querySelector(".phvimage").src);
+      var storageWarning = document.querySelector("[data-photo-store-warning]");
       return {
         memory:window.__avl.S().photos["1|notes"].slice(),
         durable:durable.data.photos["1|notes"].slice(),
@@ -253,7 +254,8 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
         viewerSource:document.querySelector(".phvimage").src,
         viewerBytes:Array.from(new Uint8Array(await viewerResponse.arrayBuffer())),
         status:window.__avl.photoStoreStatus(),
-        toast:document.getElementById("toast").textContent
+        toast:document.getElementById("toast").textContent,
+        storageWarning:storageWarning ? storageWarning.textContent : ""
       };
     });
 
@@ -264,6 +266,8 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
     assert.deepEqual(result.viewerBytes, dataUrlBytes(result.memory[0]));
     assert.match(result.status.lastError, /Injected IndexedDB failure/);
     assert.equal(result.status.pending, 0);
-    assert.match(result.toast, /Additional photo storage unavailable/i);
+    assert.equal(result.toast,"Photo added.","the batch outcome must remain the only capture toast");
+    assert.match(result.storageWarning,/Additional device photo storage is unavailable/i);
+    assert.match(result.storageWarning,/Export this survey after the visit/i);
   });
 });
