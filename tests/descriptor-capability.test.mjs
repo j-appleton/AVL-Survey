@@ -295,6 +295,90 @@ test("missing records are explicit and block viewer actions, package preparation
   });
 });
 
+/* Every other missing-record test opens the section and waits for the
+   thumbnails, which populates the missing set through the lazy read. That hides
+   whether the keys-only sweep does anything. With the section closed nothing
+   hydrates, so only the sweep can know -- and without it the panel affirmatively
+   claims the photos are in device storage. */
+test("the integrity sweep reports missing records before anything hydrates", async function(){
+  await withApp(async function(page){
+    var reported = await page.evaluate(async function(state){
+      window.AVLPhotoStore.keys = function(){ return Promise.resolve([]); };
+      await window.__avl.setDescriptorStateForTest(state);
+      await window.__avl.refreshPhotoIntegrity();
+      return {
+        storage:window.__avl.storageHTML().replace(/<[^>]+>/g," ").replace(/\s+/g," "),
+        hydrated:document.querySelectorAll("img[src^='blob:']").length,
+        missingTiles:document.querySelectorAll(".ph.missing").length
+      };
+    }, stateWithPhotos([
+      descriptor("unhydrated-a","image/jpeg",6,900,675),
+      descriptor("unhydrated-b","image/jpeg",5,900,675)
+    ], false));
+
+    assert.equal(reported.hydrated,0,"the closed section must not have hydrated");
+    assert.equal(reported.missingTiles,0,"no thumbnail was rendered to mark missing");
+    assert.match(reported.storage,/2 photos missing from device storage/);
+    assert.doesNotMatch(
+      reported.storage,
+      /[1-9]\d* photos? in device storage/,
+      "records that do not exist must never be counted as present"
+    );
+  });
+});
+
+/* No IndexedDB record is deleted anywhere in B2a. That guarantee is what makes
+   "restore the backup" mean "restore the photos" after a deletion, and it is
+   the reason no reclamation ships in this release. */
+test("deleting a photo strands no backup: records survive and restore byte-exactly", async function(){
+  await withApp(async function(page){
+    await addRecord(page,"kept-a","image/jpeg",A_BYTES,900,675);
+    await addRecord(page,"kept-b","image/png",B_BYTES,640,480);
+
+    await page.evaluate(async function(state){
+      await window.__avl.setDescriptorStateForTest(state);
+      window.__avl.snapshot();
+    }, stateWithPhotos([
+      descriptor("kept-a","image/jpeg",A_BYTES.length,900,675),
+      descriptor("kept-b","image/png",B_BYTES.length,640,480)
+    ], true));
+
+    /* delete the first photo through the production two-tap control */
+    await page.locator('[data-delph="0"]').click();
+    await page.locator('[data-delph="0"]').click();
+    await until(async function(){
+      return page.evaluate(function(){
+        return window.__avl.S().photos["1|notes"].length === 1;
+      });
+    });
+
+    var afterDelete = await page.evaluate(function(){
+      return window.AVLPhotoStore.keys().then(function(ids){ return ids.slice().sort(); });
+    });
+    assert.deepEqual(afterDelete,["kept-a","kept-b"],
+      "deleting a photo must remove only the active reference");
+
+    var restored = await page.evaluate(async function(){
+      window.__avl.restoreBackup();
+      await window.__avl.refreshPhotoIntegrity();
+      var state = window.__avl.S().photos["1|notes"];
+      var loaded = await window.__avl.hydratePhotoSource("1|notes",0);
+      var buffer = await loaded.blob.arrayBuffer();
+      return {
+        count:state.length,
+        ids:state.map(function(entry){ return entry.id; }),
+        firstBytes:Array.prototype.slice.call(new Uint8Array(buffer)),
+        storage:window.__avl.storageHTML().replace(/<[^>]+>/g," ").replace(/\s+/g," ")
+      };
+    });
+    assert.equal(restored.count,2,"the backup must restore both photos");
+    assert.deepEqual(restored.ids,["kept-a","kept-b"]);
+    assert.deepEqual(restored.firstBytes,A_BYTES,
+      "restore must return the exact photo bytes, not just the text state");
+    assert.doesNotMatch(restored.storage,/missing from device storage/);
+  });
+});
+
 test("a descriptor-backed package extracts with exact bytes and a portable inline survey", async function(){
   await withApp(async function(page){
     await addRecord(page,"package-a","image/jpeg",A_BYTES,900,675);
