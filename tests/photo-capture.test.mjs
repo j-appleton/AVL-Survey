@@ -74,10 +74,18 @@ test("a photo batch preserves selection order, renders once and reports once", a
       toastObserver.disconnect();
       await window.__avl.photoStoreIdle();
 
+      var memory = JSON.parse(JSON.stringify(window.__avl.S().photos["1|notes"]));
+      var records = await window.AVLPhotoStore.all();
+      var recordBytes = {};
+      for(var i=0;i<records.length;i++){
+        recordBytes[records[i].id] =
+          Array.from(new Uint8Array(await records[i].blob.arrayBuffer()));
+      }
       return {
         started:started,
-        memory:window.__avl.S().photos["1|notes"].slice(),
+        memory:memory,
         durable:JSON.parse(window.__avl.raw()).data.photos["1|notes"],
+        storedBytes:memory.map(function(entry){ return recordBytes[entry.id]; }),
         rootMutations:rootMutations,
         toastMutations:toastMutations,
         toast:document.getElementById("toast").textContent,
@@ -88,19 +96,23 @@ test("a photo batch preserves selection order, renders once and reports once", a
     });
 
     assert.deepEqual(result.started,["first","second","third","fourth"]);
-    assert.deepEqual(result.memory,[
-      "data:image/jpeg;base64,AQ==",
-      "data:image/jpeg;base64,Ag==",
-      "data:image/jpeg;base64,Aw==",
-      "data:image/jpeg;base64,BA=="
-    ]);
+    assert.equal(result.memory.length,4);
+    result.memory.forEach(function(entry){
+      assert.deepEqual(Object.keys(entry).sort(),["bytes","height","id","mime","width"]);
+      assert.equal(entry.mime,"image/jpeg");
+      assert.equal(entry.bytes,1);
+      assert.equal(entry.width,10);
+      assert.equal(entry.height,10);
+    });
+    assert.equal(new Set(result.memory.map(function(entry){ return entry.id; })).size,4);
+    assert.deepEqual(result.storedBytes,[[1],[2],[3],[4]]);
     assert.deepEqual(result.durable,result.memory);
     assert.equal(result.rootMutations,1,"the survey must render once at batch completion");
     assert.equal(result.toastMutations,1,"one capture batch must produce one summary toast");
     assert.equal(result.toast,"4 photos added.");
     assert.equal(result.viewer,false);
     assert.equal(result.thumbnails,4);
-    assert.equal(result.schema,2,"the reversible capture PR must not move the schema");
+    assert.equal(result.schema,3);
   });
 });
 
@@ -145,6 +157,9 @@ test("the recovery notice is rebuilt by later renders and cannot be dismissed", 
   await withCaptureApp(async function(page){
     var result = await page.evaluate(async function(){
       window.__avl.setRaw("not-json-so-persist-cannot-succeed");
+      window.AVLPhotoStore.addDataUrl = function(){
+        return Promise.reject(new Error("force inline recovery"));
+      };
       var realSet = Storage.prototype.setItem;
       Storage.prototype.setItem = function(){ throw new Error("quota"); };
       try {
@@ -190,6 +205,9 @@ test("the recovery notice is rebuilt by later renders and cannot be dismissed", 
 test("recovery coordinates follow deletions and never attach to another photo", async function(){
   await withCaptureApp(async function(page){
     var result = await page.evaluate(async function(){
+      window.AVLPhotoStore.addDataUrl = function(){
+        return Promise.reject(new Error("force inline recovery"));
+      };
       var realSet = Storage.prototype.setItem;
       Storage.prototype.setItem = function(){ throw new Error("quota"); };
       try {
@@ -235,45 +253,144 @@ test("recovery coordinates follow deletions and never attach to another photo", 
   });
 });
 
-test("capture clears a pending debounced save before the first photo is appended", async function(){
+test("a field save cannot persist a descriptor before storage readback verifies it", async function(){
   await withCaptureApp(async function(page){
     var result = await page.evaluate(async function(){
       window.__avl.persistSurvey();
-      var field = document.querySelector('[data-scope="visit"][data-k="client"]');
-      field.value = "Pending field edit";
-      field.dispatchEvent(new Event("input",{bubbles:true}));
-      window.__midBatchDurableCount = -1;
+      var realAdd = window.AVLPhotoStore.addDataUrl;
+      var pendingRecord = null;
+      var releaseRead = null;
+      window.AVLPhotoStore.addDataUrl = function(data,width,height){
+        return realAdd(data,width,height).then(function(record){
+          pendingRecord = record;
+          return record;
+        });
+      };
+      window.AVLPhotoStore.get = function(){
+        return new Promise(function(resolve){ releaseRead = resolve; });
+      };
 
-      await window.__avl.processPhotoBatchForTest(
+      var flight = window.__avl.processPhotoBatchForTest(
         "1|notes",
-        [{name:"first"},{name:"second"}],
+        [{name:"first"}],
         function(file,done){
-          if(file.name === "first"){
-            setTimeout(function(){
-              done("data:image/jpeg;base64,Cg==",{width:10,height:10});
-            },10);
-            return;
-          }
-          setTimeout(function(){
-            var raw = JSON.parse(window.__avl.raw());
-            window.__midBatchDurableCount = (raw.data.photos["1|notes"] || []).length;
-            done("data:image/jpeg;base64,Cw==",{width:10,height:10});
-          },350);
+          done("data:image/jpeg;base64,Cg==",{width:10,height:10});
         }
       );
+      while(!releaseRead){
+        await new Promise(function(resolve){ setTimeout(resolve,0); });
+      }
 
+      var tentative = window.__avl.S().photos["1|notes"][0];
+      var field = document.querySelector('[data-scope="visit"][data-k="client"]');
+      field.value = "Edit during verification";
+      field.dispatchEvent(new Event("input",{bubbles:true}));
+      await new Promise(function(resolve){ setTimeout(resolve,350); });
+      var during = JSON.parse(window.__avl.raw());
+
+      releaseRead(pendingRecord);
+      await flight;
+      var after = JSON.parse(window.__avl.raw());
       return {
-        midBatchDurableCount:window.__midBatchDurableCount,
-        finalDurableCount:JSON.parse(window.__avl.raw()).data.photos["1|notes"].length
+        tentativeIsDescriptor:window.__avl.isPhotoDescriptor(tentative),
+        duringCount:(during.data.photos["1|notes"] || []).length,
+        duringClient:during.data.visit.client,
+        finalCount:after.data.photos["1|notes"].length,
+        finalClient:after.data.visit.client
       };
     });
 
-    assert.equal(
-      result.midBatchDurableCount,
-      0,
-      "a field's pending save must not persist a partially processed capture batch"
-    );
-    assert.equal(result.finalDurableCount,2);
+    assert.equal(result.tentativeIsDescriptor,true,"the test must reach the critical descriptor window");
+    assert.equal(result.duringCount,0,
+      "a field's pending save must not persist an unverified descriptor");
+    assert.notEqual(result.duringClient,"Edit during verification",
+      "the suppressed save must still be pending during verification");
+    assert.equal(result.finalCount,1);
+    assert.equal(result.finalClient,"Edit during verification",
+      "the batch-end persistence must include suppressed field edits");
+  });
+});
+
+test("a hung compressor times out and cannot leave autosave disabled", async function(){
+  await withCaptureApp(async function(page){
+    var result = await page.evaluate(async function(){
+      window.__avl.persistSurvey();
+      window.__avl.setPhotoCompressTimeoutForTest(40);
+      window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"never-finishes"}],
+        function(){}
+      );
+      await new Promise(function(resolve){ setTimeout(resolve,100); });
+      var afterTimeout = window.__avl.photoStoreStatus();
+
+      var field = document.querySelector('[data-scope="visit"][data-k="client"]');
+      field.value = "Autosave survived";
+      field.dispatchEvent(new Event("input",{bubbles:true}));
+      await new Promise(function(resolve){ setTimeout(resolve,350); });
+      return {
+        status:afterTimeout,
+        durableClient:JSON.parse(window.__avl.raw()).data.visit.client,
+        toast:document.getElementById("toast").textContent
+      };
+    });
+
+    assert.equal(result.status.pending,0,
+      "the timed-out file must leave no permanently pending capture");
+    assert.equal(result.durableClient,"Autosave survived",
+      "field autosave must resume after the timeout");
+    assert.equal(result.toast,"Could not add that photo.");
+  });
+});
+
+test("a rejected batch cannot poison the shared capture flight", async function(){
+  await withCaptureApp(async function(page){
+    var result = await page.evaluate(async function(){
+      var bar = document.getElementById("bar");
+      var parent = bar.parentNode;
+      var nextSibling = bar.nextSibling;
+      parent.removeChild(bar);
+      var firstRejected = false;
+      try {
+        await window.__avl.processPhotoBatchForTest(
+          "1|notes",
+          [{name:"first"}],
+          function(file,done){
+            done("data:image/jpeg;base64,AQ==",{width:10,height:10});
+          }
+        );
+      } catch(error){
+        firstRejected = true;
+      }
+      var idleResolved = true;
+      try { await window.__avl.photoCaptureIdle(); }
+      catch(error){ idleResolved = false; }
+      parent.insertBefore(bar,nextSibling);
+
+      var second = await window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"second"}],
+        function(file,done){
+          done("data:image/jpeg;base64,Ag==",{width:10,height:10});
+        }
+      );
+      await window.__avl.photoCaptureIdle();
+      return {
+        firstRejected:firstRejected,
+        idleResolved:idleResolved,
+        second:second,
+        count:window.__avl.S().photos["1|notes"].length,
+        pending:window.__avl.photoStoreStatus().pending
+      };
+    });
+
+    assert.equal(result.firstRejected,true,"the test must force the first batch to reject");
+    assert.equal(result.idleResolved,true,
+      "the shared flight itself must absorb the rejection before another capture starts");
+    assert.equal(result.second.added,1,
+      "the next batch must run instead of inheriting the previous rejection");
+    assert.equal(result.count,2);
+    assert.equal(result.pending,0);
   });
 });
 
@@ -319,6 +436,9 @@ test("four memory-only photos produce one persistent recovery notice and no view
   await withCaptureApp(async function(page){
     var result = await page.evaluate(async function(){
       window.__avl.persistSurvey();
+      window.AVLPhotoStore.addDataUrl = function(){
+        return Promise.reject(new Error("force inline recovery"));
+      };
       var originalSetItem = Storage.prototype.setItem;
       Storage.prototype.setItem = function(key,value){
         if(key === "avl_survey_v1") throw new DOMException("Quota exceeded","QuotaExceededError");
@@ -360,8 +480,9 @@ test("four memory-only photos produce one persistent recovery notice and no view
     assert.equal(result.memory,4);
     assert.equal(result.durable,0);
     assert.equal(result.noticeCount,1);
-    assert.match(result.noticeText,/4 photos are available now but could not be added to the survey/i);
-    assert.match(result.noticeText,/Save them before leaving this page/i);
+    assert.match(result.noticeText,/4 photos could not be added to the survey/i);
+    assert.match(result.noticeText,/4 are available only until this page closes/i);
+    assert.match(result.noticeText,/Export or save them before leaving this page/i);
     assert.equal(result.saveActions,4);
     assert.equal(result.dismissActions,0);
     assert.deepEqual(result.recoveries,[

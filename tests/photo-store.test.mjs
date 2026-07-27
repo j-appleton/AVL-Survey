@@ -127,11 +127,42 @@ test("the photo store rejects duplicate IDs instead of overwriting a record", as
   });
 });
 
-test("new captures dual-write exact blobs with stable IDs while schema-v2 reads stay local", async function(){
+test("a multi-photo store transaction is all-or-nothing", async function(){
+  await withPhotoStoreApp({
+    init:function(){
+      try {
+        Object.defineProperty(window.crypto,"randomUUID",{
+          configurable:true,
+          value:function(){ return "same-id-for-atomic-batch"; }
+        });
+      } catch(error){}
+    }
+  }, async function(page){
+    var result = await page.evaluate(async function(){
+      var rejection = null;
+      try {
+        await window.AVLPhotoStore.addDataUrls([
+          {data:"data:image/jpeg;base64,AQ==",width:1,height:1},
+          {data:"data:image/jpeg;base64,Ag==",width:1,height:1}
+        ]);
+      } catch(error){
+        rejection = {name:error && error.name,message:error && error.message};
+      }
+      return {
+        rejection:rejection,
+        count:(await window.AVLPhotoStore.all()).length
+      };
+    });
+    assert.ok(result.rejection,"a duplicate inside the batch must reject");
+    assert.equal(result.count,0,"the failed transaction must not leave a partial batch");
+  });
+});
+
+test("new captures persist authoritative descriptors built from exact stored records", async function(){
   await withPhotoStoreApp({}, async function(page){
     var imported = await page.evaluate(function(){
       return window.__avl.applyImport(JSON.stringify({
-        visit:{client:"Dual write"},
+        visit:{client:"Authoritative capture"},
         log:{},
         rooms:[{id:1,d:{name:"Store guard"}}],
         photos:{},
@@ -162,16 +193,16 @@ test("new captures dual-write exact blobs with stable IDs while schema-v2 reads 
         });
       }
 
-      var statePhotos = window.__avl.S().photos["1|notes"].slice();
+      var statePhotos = JSON.parse(JSON.stringify(window.__avl.S().photos["1|notes"]));
       var durable = JSON.parse(window.__avl.raw());
       var readCalls = 0;
       window.AVLPhotoStore.get = function(){
         readCalls++;
-        return Promise.reject(new Error("PR A must not read IndexedDB"));
+        return Promise.reject(new Error("resident capture should not need another IndexedDB read"));
       };
       window.AVLPhotoStore.all = function(){
         readCalls++;
-        return Promise.reject(new Error("PR A must not read IndexedDB"));
+        return Promise.reject(new Error("viewer must not list the store"));
       };
       window.__avl.openPhotoViewer("1|notes", 0);
       await window.__avl.hydratePhotoSource("1|notes",0);
@@ -190,12 +221,10 @@ test("new captures dual-write exact blobs with stable IDs while schema-v2 reads 
       };
     });
 
-    assert.equal(result.schema, 2, "PR A must not bump the survey schema");
+    assert.equal(result.schema, 3);
     assert.equal(result.statePhotos.length, 2);
-    assert.deepEqual(result.durablePhotos, result.statePhotos, "localStorage must retain both full data URLs");
-    result.statePhotos.forEach(function(photo){
-      assert.match(photo, /^data:image\/jpeg;base64,/);
-    });
+    assert.deepEqual(result.durablePhotos, result.statePhotos,
+      "localStorage must persist only the descriptors returned by the photo store");
 
     assert.equal(result.records.length, 2);
     assert.equal(new Set(result.records.map(function(record){ return record.id; })).size, 2);
@@ -209,17 +238,29 @@ test("new captures dual-write exact blobs with stable IDs while schema-v2 reads 
       assert.equal(record.blobType, "image/jpeg");
       assert.equal(record.bytes, record.blobSize);
       assert.ok(Date.parse(record.createdAt) > 0);
-      var matchingIndex = record.width === 40 ? 0 : 1;
-      assert.deepEqual(record.payload, dataUrlBytes(result.statePhotos[matchingIndex]));
+      var descriptor = result.statePhotos.filter(function(entry){
+        return entry.id === record.id;
+      })[0];
+      assert.ok(descriptor,"every stored record must have one survey descriptor");
+      assert.deepEqual(descriptor,{
+        id:record.id,
+        mime:record.mime,
+        bytes:record.bytes,
+        width:record.width,
+        height:record.height
+      });
     });
     assert.match(result.viewerSource, /^blob:/);
-    assert.deepEqual(result.viewerBytes, dataUrlBytes(result.statePhotos[0]));
-    assert.equal(result.readCalls, 0, "viewer and sharing paths must remain on localStorage in PR A");
-    assert.deepEqual(result.storeStatus, {pending:0,lastError:""});
+    var firstRecord = result.records.filter(function(record){
+      return record.id === result.statePhotos[0].id;
+    })[0];
+    assert.deepEqual(result.viewerBytes,firstRecord.payload);
+    assert.equal(result.readCalls, 0, "capture verification must leave the current photo resident");
+    assert.deepEqual(result.storeStatus, {pending:0,lastError:"",kind:"",orphaned:[]});
   });
 });
 
-test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving", async function(){
+test("an IndexedDB add failure falls back inline and creates no orphan record", async function(){
   await withPhotoStoreApp({}, async function(page){
     var imported = await page.evaluate(function(){
       return window.__avl.applyImport(JSON.stringify({
@@ -242,6 +283,7 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
 
     var result = await page.evaluate(async function(){
       var durable = JSON.parse(window.__avl.raw());
+      var records = await window.AVLPhotoStore.all();
       window.__avl.openPhotoViewer("1|notes",0);
       await window.__avl.hydratePhotoSource("1|notes",0);
       await new Promise(function(resolve){ setTimeout(resolve,0); });
@@ -250,6 +292,7 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
       return {
         memory:window.__avl.S().photos["1|notes"].slice(),
         durable:durable.data.photos["1|notes"].slice(),
+        records:records.length,
         schema:durable.schema,
         viewerSource:document.querySelector(".phvimage").src,
         viewerBytes:Array.from(new Uint8Array(await viewerResponse.arrayBuffer())),
@@ -259,15 +302,148 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
       };
     });
 
-    assert.equal(result.schema, 2);
+    assert.equal(result.schema, 3);
     assert.equal(result.memory.length, 1);
     assert.deepEqual(result.durable, result.memory);
+    assert.equal(result.records,0,"a rejected add must leave no orphan in device storage");
     assert.match(result.viewerSource, /^blob:/);
     assert.deepEqual(result.viewerBytes, dataUrlBytes(result.memory[0]));
     assert.match(result.status.lastError, /Injected IndexedDB failure/);
+    assert.equal(result.status.kind,"add");
     assert.equal(result.status.pending, 0);
-    assert.equal(result.toast,"Photo added.","the batch outcome must remain the only capture toast");
-    assert.match(result.storageWarning,/Additional device photo storage is unavailable/i);
+    assert.deepEqual(result.status.orphaned,[]);
+    assert.equal(
+      result.toast,
+      "Photo added. 1 is stored in the survey file rather than device storage.",
+      "the batch outcome must remain the only capture toast"
+    );
+    assert.match(result.storageWarning,/Device photo storage failed for part of a capture/i);
     assert.match(result.storageWarning,/Export this survey after the visit/i);
+  });
+});
+
+test("capture descriptors take MIME, bytes and dimensions from the returned record", async function(){
+  await withPhotoStoreApp({}, async function(page){
+    await page.evaluate(function(){
+      return window.__avl.applyImport(JSON.stringify({
+        visit:{client:"Record shape"},
+        log:{},
+        rooms:[{id:1,d:{name:"Record source"}}],
+        photos:{},
+        skipped:{},
+        ui:{"1|notes":true}
+      }));
+    });
+
+    var result = await page.evaluate(async function(){
+      window.AVLPhotoStore.addDataUrl = function(){
+        var record = {
+          id:"record-is-authority",
+          mime:"image/png",
+          blob:new Blob([new Uint8Array([9,8,7])],{type:"image/png"}),
+          width:777,
+          height:333,
+          bytes:3,
+          createdAt:"2026-07-28T00:00:00.000Z"
+        };
+        return window.AVLPhotoStore.addRecord(record);
+      };
+      await window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"compressor-metadata"}],
+        function(file,done){
+          done("data:image/jpeg;base64,AQ==",{width:10,height:20});
+        }
+      );
+      var descriptor = window.__avl.S().photos["1|notes"][0];
+      var source = await window.__avl.hydratePhotoSource("1|notes",0);
+      return {
+        descriptor:descriptor,
+        bytes:Array.from(new Uint8Array(await source.blob.arrayBuffer())),
+        filename:window.__avl.photoManifest()[0].filename
+      };
+    });
+
+    assert.deepEqual(result.descriptor,{
+      id:"record-is-authority",
+      mime:"image/png",
+      bytes:3,
+      width:777,
+      height:333
+    });
+    assert.deepEqual(result.bytes,[9,8,7]);
+    assert.equal(result.filename,"001_R01_notes.png");
+  });
+});
+
+test("failed readback leaves one orphan, falls back inline and degrades the rest of the batch", async function(){
+  await withPhotoStoreApp({}, async function(page){
+    await page.evaluate(function(){
+      return window.__avl.applyImport(JSON.stringify({
+        visit:{client:"Verify failure"},
+        log:{},
+        rooms:[{id:1,d:{name:"Readback guard"}}],
+        photos:{},
+        skipped:{},
+        ui:{"1|notes":true}
+      }));
+    });
+
+    var result = await page.evaluate(async function(){
+      var realAdd = window.AVLPhotoStore.addDataUrl;
+      var realGet = window.AVLPhotoStore.get;
+      var addCalls = 0;
+      window.AVLPhotoStore.addDataUrl = function(data,width,height){
+        addCalls++;
+        return realAdd(data,width,height);
+      };
+      window.AVLPhotoStore.get = function(id){
+        return realGet(id).then(function(record){
+          record.blob = new Blob([new Uint8Array([9,9])],{type:record.mime});
+          return record;
+        });
+      };
+      var batch = await window.__avl.processPhotoBatchForTest(
+        "1|notes",
+        [{name:"first"},{name:"second"}],
+        function(file,done){
+          done(
+            file.name === "first"
+              ? "data:image/jpeg;base64,AQ=="
+              : "data:image/jpeg;base64,Ag==",
+            {width:10,height:10}
+          );
+        }
+      );
+      var records = await window.AVLPhotoStore.all();
+      return {
+        batch:batch,
+        addCalls:addCalls,
+        memory:window.__avl.S().photos["1|notes"].slice(),
+        durable:JSON.parse(window.__avl.raw()).data.photos["1|notes"],
+        records:records.length,
+        recordId:records[0] && records[0].id,
+        status:window.__avl.photoStoreStatus(),
+        toast:document.getElementById("toast").textContent
+      };
+    });
+
+    assert.equal(result.addCalls,1,"the batch must stop trusting storage after failed verification");
+    assert.equal(result.records,1,"the failed record remains as the one allowed orphan");
+    assert.deepEqual(result.status.orphaned,[result.recordId],
+      "the orphan ID must remain available for future reclamation");
+    assert.deepEqual(result.status.orphaned,await page.evaluate(function(){
+      return window.__avl.orphanedPhotoIds();
+    }));
+    assert.equal(result.batch.orphans,1);
+    assert.equal(result.batch.inlineFallbacks,2);
+    assert.deepEqual(result.memory,[
+      "data:image/jpeg;base64,AQ==",
+      "data:image/jpeg;base64,Ag=="
+    ]);
+    assert.deepEqual(result.durable,result.memory);
+    assert.equal(result.status.kind,"verify");
+    assert.match(result.toast,/2 photos added/);
+    assert.match(result.toast,/2 are stored in the survey file rather than device storage/);
   });
 });

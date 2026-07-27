@@ -365,12 +365,15 @@ test("capture stays in the survey and the stored photo remains manually shareabl
     });
     await page.evaluate(function(){ return window.__avl.photoCaptureIdle(); });
 
-    var captured = await page.evaluate(function(){
+    var captured = await page.evaluate(async function(){
       var raw = window.__avl.raw();
+      var entry = (window.__avl.S().photos["1|notes"] || [])[0];
+      var source = await window.__avl.hydratePhotoSource("1|notes",0);
       return {
         count:(window.__avl.S().photos["1|notes"] || []).length,
         persisted:raw ? (JSON.parse(raw).data.photos["1|notes"] || []).length : 0,
-        stored:(window.__avl.S().photos["1|notes"] || [""])[0].slice(0,23),
+        descriptor:entry,
+        sourceBytes:source.blob.size,
         viewer:!!document.querySelector(".phviewer"),
         thumbnails:document.querySelectorAll('[data-photos="1|notes"] [data-viewph]').length,
         toast:document.getElementById("toast").textContent,
@@ -379,7 +382,11 @@ test("capture stays in the survey and the stored photo remains manually shareabl
     });
     assert.equal(captured.count, 1);
     assert.equal(captured.persisted, 1, "capture must persist before it is reported as added");
-    assert.equal(captured.stored, "data:image/jpeg;base64,");
+    assert.equal(typeof captured.descriptor.id,"string");
+    assert.equal(captured.descriptor.mime,"image/jpeg");
+    assert.equal(captured.descriptor.bytes,captured.sourceBytes);
+    assert.equal(captured.descriptor.width,40);
+    assert.equal(captured.descriptor.height,60);
     assert.equal(captured.viewer, false, "successful capture must not interrupt the survey with the viewer");
     assert.equal(captured.thumbnails, 1);
     assert.equal(captured.toast, "Photo added.");
@@ -473,8 +480,8 @@ test("a storage-full capture stays shareable through a persistent section notice
     assert.equal(result.durableCount, 0, "the test must prove storage actually rejected the photo");
     assert.equal(result.viewer, false, "storage failure must not interrupt a capture batch");
     assert.equal(result.notices, 1);
-    assert.match(result.notice, /available now but could not be added to the survey/i);
-    assert.match(result.notice, /Save it before leaving this page/i);
+    assert.match(result.notice, /in device storage but could not be added to the survey/i);
+    assert.match(result.notice, /Export or save it before leaving this page/i);
     assert.equal(result.dismiss, 0, "the recovery notice must not be dismissible");
     assert.equal(result.shareCalls, 0);
 

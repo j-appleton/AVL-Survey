@@ -68,7 +68,7 @@ async function addRecord(page,id,mime,bytes,width,height){
   },{id:id,mime:mime,bytes:bytes,width:width,height:height});
 }
 
-test("schema-2 state accepts the photo union and snapshots sixty descriptors by reference", async function(){
+test("schema-3 state accepts the photo union and snapshots sixty descriptors by reference", async function(){
   await withApp(async function(page){
     var result = await page.evaluate(async function(){
       var entries = [];
@@ -114,7 +114,7 @@ test("schema-2 state accepts the photo union and snapshots sixty descriptors by 
     assert.equal(result.malformed.ok,false);
     assert.equal(result.duplicated.ok,false);
     assert.equal(result.snap,true);
-    assert.equal(result.schema,2);
+    assert.equal(result.schema,3);
     assert.equal(result.count,60);
     assert.deepEqual(result.first,descriptor("fixture-0","image/jpeg",1000,900,675));
     assert.ok(result.rawLength < 20000,"a descriptor backup must not duplicate photo payloads");
@@ -434,7 +434,7 @@ test("a descriptor-backed package extracts with exact bytes and a portable inlin
   });
 });
 
-test("portable v3 export is byte-exact, carries no IDs and imports with fresh IDs only in the test lane", async function(){
+test("portable v3 export is byte-exact, carries no IDs and production import assigns fresh IDs", async function(){
   await withApp(async function(page){
     await addRecord(page,"original-a","image/jpeg",A_BYTES,900,675);
     var current = descriptor("original-a","image/jpeg",A_BYTES.length,900,675);
@@ -483,12 +483,115 @@ test("portable v3 export is byte-exact, carries no IDs and imports with fresh ID
     assert.equal(new Set(imported.entries.map(function(entry){ return entry.id; })).size,2);
     assert.deepEqual(imported.reads,[A_BYTES,B_BYTES]);
 
-    var liveInline = await page.evaluate(async function(payload){
+    var liveImport = await page.evaluate(async function(payload){
       var ok = await window.__avl.applyImport(JSON.stringify(payload));
-      return {ok:ok,entries:window.__avl.S().photos["1|notes"]};
+      var entries = window.__avl.S().photos["1|notes"];
+      var reads = [];
+      for(var i=0;i<entries.length;i++){
+        var source = await window.__avl.hydratePhotoSource("1|notes",i);
+        reads.push(Array.from(new Uint8Array(await source.blob.arrayBuffer())));
+      }
+      return {ok:ok,entries:entries,reads:reads};
     },portable);
-    assert.equal(liveInline.ok,true);
-    liveInline.entries.forEach(function(entry){ assert.equal(typeof entry,"string"); });
+    assert.equal(liveImport.ok,true);
+    liveImport.entries.forEach(function(entry){
+      assert.equal(typeof entry.id,"string");
+      assert.notEqual(entry.id,"incoming-id-must-not-be-trusted");
+    });
+    assert.equal(new Set(liveImport.entries.map(function(entry){ return entry.id; })).size,2);
+    assert.deepEqual(liveImport.reads,[A_BYTES,B_BYTES]);
+  });
+});
+
+test("portable import abandons the whole file to inline photos after a storage write failure", async function(){
+  await withApp(async function(page){
+    var payload = {
+      app:"avl-survey",
+      schema:3,
+      photoFormat:"inline",
+      data:stateWithPhotos([
+        {mime:"image/jpeg",width:2,height:3,bytes:A_BYTES.length,data:A_DATA},
+        {mime:"image/png",width:4,height:5,bytes:B_BYTES.length,data:B_DATA}
+      ],false)
+    };
+    var result = await page.evaluate(async function(input){
+      await window.AVLPhotoStore.clear();
+      var realAdd = window.AVLPhotoStore.addDataUrl;
+      var calls = 0;
+      window.AVLPhotoStore.addDataUrl = function(data,width,height){
+        calls++;
+        return realAdd(data,width,height);
+      };
+      window.AVLPhotoStore.addDataUrls = function(){
+        calls++;
+        return Promise.reject(new Error("injected import failure"));
+      };
+      var ok = await window.__avl.applyImport(JSON.stringify(input));
+      var records = await window.AVLPhotoStore.all();
+      return {
+        ok:ok,
+        calls:calls,
+        photos:window.__avl.S().photos["1|notes"],
+        records:records.map(function(record){ return record.id; }),
+        orphans:window.__avl.orphanedPhotoIds()
+      };
+    },payload);
+    assert.equal(result.ok,true);
+    assert.equal(result.calls,2);
+    assert.deepEqual(result.photos,[A_DATA,B_DATA],
+      "a portable import must never leave a half-descriptor survey");
+    assert.equal(result.records.length,1,
+      "the successful pre-flight record is the import's one allowed orphan");
+    assert.deepEqual(result.orphans,result.records);
+  });
+});
+
+test("portable import reads the probe back before entering the descriptor lane", async function(){
+  await withApp(async function(page){
+    var payload = {
+      app:"avl-survey",
+      schema:3,
+      photoFormat:"inline",
+      data:stateWithPhotos([
+        {mime:"image/jpeg",width:2,height:3,bytes:A_BYTES.length,data:A_DATA},
+        {mime:"image/png",width:4,height:5,bytes:B_BYTES.length,data:B_DATA}
+      ],false)
+    };
+    var result = await page.evaluate(async function(input){
+      await window.AVLPhotoStore.clear();
+      var realGet = window.AVLPhotoStore.get;
+      var getCalls = 0;
+      var batchCalls = 0;
+      window.AVLPhotoStore.get = function(id){
+        getCalls++;
+        return realGet(id).then(function(record){
+          record.blob = new Blob([new Uint8Array([0])],{type:record.mime});
+          return record;
+        });
+      };
+      window.AVLPhotoStore.addDataUrls = function(){
+        batchCalls++;
+        return Promise.reject(new Error("must not enter batch lane"));
+      };
+      var ok = await window.__avl.applyImport(JSON.stringify(input));
+      var records = await window.AVLPhotoStore.all();
+      return {
+        ok:ok,
+        getCalls:getCalls,
+        batchCalls:batchCalls,
+        photos:window.__avl.S().photos["1|notes"],
+        records:records.map(function(record){ return record.id; }),
+        orphans:window.__avl.orphanedPhotoIds()
+      };
+    },payload);
+
+    assert.equal(result.ok,true);
+    assert.equal(result.getCalls,1,"the probe must cross a real store.get readback");
+    assert.equal(result.batchCalls,0,"failed probe verification must block the descriptor batch");
+    assert.deepEqual(result.photos,[A_DATA,B_DATA]);
+    assert.equal(result.records.length,1);
+    assert.deepEqual(result.orphans,result.records,
+      "the failed probe must remain identifiable as the import's one orphan");
   });
 });
 

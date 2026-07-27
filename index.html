@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>AVL Site Survey</title>
+<title>Preplot</title>
 
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./favicon.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="AVL Survey">
+<meta name="apple-mobile-web-app-title" content="Preplot">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="format-detection" content="telephone=no">
 <style>
@@ -274,7 +274,7 @@ button.btn:active{transform:translateY(1px)}
 <header>
   <div class="hd">
     <div style="flex:1">
-      <h1>AVL Site Survey <span class="sub" id="hdsub">Pre-install walkthrough</span></h1>
+      <h1>Preplot</h1>
     </div>
     <span class="corechip" id="corechip">core 0/0</span>
   </div>
@@ -318,8 +318,8 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.9.1";
-var SCHEMA = 2;
+var APP_VERSION = "1.10.0";
+var SCHEMA = 3;
 
 /* ============================================================
    SCHEMA
@@ -515,6 +515,11 @@ var seq = 1;
 var MIGRATIONS = {
   1: function(d){
     d.meta = {created:nowISO(), updated:nowISO(), app:APP_VERSION, migratedFrom:1};
+    return d;
+  },
+  2: function(d){
+    d.meta = d.meta || {};
+    if(typeof d.meta.migratedFrom === "undefined") d.meta.migratedFrom = 2;
     return d;
   }
 };
@@ -743,6 +748,8 @@ function portableEnvelope(){
 
 var saveTimer = null;
 var photoCaptureRecoveries = [];
+var photoCaptureCritical = false;
+var photoCaptureSaveSuppressed = false;
 function persistSurvey(){
   if(S.meta) S.meta.updated = nowISO();
   var ok = store.set(KEY, JSON.stringify(stateEnvelope()));
@@ -757,14 +764,20 @@ function persistSurvey(){
 }
 function save(){
   clearTimeout(saveTimer);
+  saveTimer = null;
+  if(photoCaptureCritical){
+    photoCaptureSaveSuppressed = true;
+    return;
+  }
   saveTimer = setTimeout(function(){
+    saveTimer = null;
     if(!persistSurvey()) toast("Storage full — export your data now");
   }, 250);
 }
 
-/* Normal captures remain base64 in localStorage for B2a. Measure that binding
-   ~5 MB ceiling directly; navigator.storage.estimate() reports a different
-   quota and is shown separately for future device-stored descriptors. */
+/* Survey state remains in localStorage. New photo bytes live in IndexedDB and
+   localStorage keeps only compact descriptors, while legacy and fallback
+   inline photos still count against this ~5 MB ceiling. */
 var LS_CAP = 5 * 1024 * 1024;
 var deviceInfo = {used:0, quota:0, known:false};
 var photoIntegrityState = "checking";
@@ -821,15 +834,23 @@ function hasSurveyWork(){
   return Object.keys(S.skipped || {}).some(function(k){ return !!S.skipped[k]; });
 }
 function storageHTML(){
+  var salvage = store.get(SALVAGE_KEY);
+  var salvageHTML = salvage
+    ? '<div class="flag bad" data-salvage-warning style="margin:0 0 10px">' +
+      'Saved survey data could not be read by this version of the app. A copy is still on this device. ' +
+      'Update the app before continuing, and do not start a replacement survey - the old one has not been deleted.</div>'
+    : '';
   if(!STORAGE_OK){
-    return '<div class="flag bad" style="margin:0">Storage unavailable in this viewer. Nothing is being saved.</div>';
+    return salvageHTML +
+      '<div class="flag bad" style="margin:0">Storage unavailable in this viewer. Nothing is being saved.</div>';
   }
 
   var used = localBytes();
   var pct = Math.min(100, Math.round(used / LS_CAP * 100));
   var color = pct >= 85 ? "var(--danger)" : (pct >= 60 ? "var(--warn)" : "var(--ok)");
   var count = photoCount();
-  var h = '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:5px">' +
+  var h = salvageHTML +
+    '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:5px">' +
     '<span>' + fmtMB(used) + ' of about ' + fmtMB(LS_CAP) + '</span>' +
     '<span>' + count + ' photo' + (count === 1 ? '' : 's') + '</span></div>';
   h += '<div style="height:7px;background:var(--line);border-radius:99px;overflow:hidden">' +
@@ -846,7 +867,7 @@ function storageHTML(){
   }
   if(photoStoreLastError){
     h += '<div class="flag" data-photo-store-warning style="margin-top:8px">' +
-      'Additional device photo storage is unavailable. This version will keep photos in the survey file. ' +
+      'Device photo storage failed for part of a capture. Those photos remain in the survey file. ' +
       'Export this survey after the visit.</div>';
   }
   var photoStorage = photoStorageCounts();
@@ -1309,8 +1330,8 @@ function dataUrlToFile(dataUrl, key, index){
 
 /* ============================================================
    PHOTO READ SEAM
-   Persisted photos remain data URLs in schema 2. Runtime consumers use this
-   accessor so schema 3 can replace the backing read without another UI rewrite.
+   Runtime consumers read either a legacy/fallback inline image or a schema-3
+   device-storage descriptor through this one accessor.
    ============================================================ */
 var photoAssets = {};
 var retiredPhotoAssets = [];
@@ -2721,9 +2742,6 @@ function updateProgress(){
   var chip = document.getElementById("corechip");
   chip.textContent = "core " + cd + "/" + c;
   chip.className = "corechip" + (c > 0 && cd === c ? " done" : "");
-  document.getElementById("hdsub").textContent =
-    S.rooms.length ? (S.rooms.length + (S.rooms.length === 1 ? " room" : " rooms") + " &middot; " + d + " fields captured").replace("&middot;","·")
-                   : "Pre-install walkthrough";
   S.rooms.forEach(function(r){
     var el = document.querySelector('[data-pct="' + r.id + '"]');
     if(el){ var p = progress(r.id); el.textContent = p.coreDone + "/" + p.core + " core"; }
@@ -2980,9 +2998,17 @@ document.addEventListener("click", function(e){
    PHOTOS
    ============================================================ */
 var photoTarget = null;
-var photoStoreWrites = [];
 var photoStoreLastError = "";
+var photoStoreFailureKind = "";
 var photoCaptureFlight = Promise.resolve();
+var photoCapturePendingCount = 0;
+var photoCompressTimeoutMs = 15000;
+var orphanedPhotoIds = [];
+
+function rememberOrphanedPhotoId(id){
+  id = String(id || "");
+  if(id && orphanedPhotoIds.indexOf(id) < 0) orphanedPhotoIds.push(id);
+}
 
 function activePhotoCaptureRecoveries(key){
   var list = photoList(key);
@@ -2998,9 +3024,27 @@ function photoCaptureRecoveryHTML(key){
   var items = activePhotoCaptureRecoveries(key);
   if(!items.length) return "";
   var count = items.length;
-  var message = count === 1
-    ? "1 photo is available now but could not be added to the survey. Save it before leaving this page."
-    : count + " photos are available now but could not be added to the survey. Save them before leaving this page.";
+  var memoryOnly = items.filter(function(item){ return item.kind === "memory-only"; }).length;
+  var unreferenced = count - memoryOnly;
+  var message;
+  if(count === 1 && memoryOnly){
+    message = "1 photo is available now but could not be added to the survey. " +
+      "Closing this page will lose it. Save it before leaving this page.";
+  } else if(count === 1){
+    message = "1 photo is in device storage but could not be added to the survey. " +
+      "Export or save it before leaving this page.";
+  } else {
+    message = count + " photos could not be added to the survey.";
+    if(memoryOnly){
+      message += " " + memoryOnly + (memoryOnly === 1 ? " is" : " are") +
+        " available only until this page closes.";
+    }
+    if(unreferenced){
+      message += " " + unreferenced + (unreferenced === 1 ? " is" : " are") +
+        " in device storage without a persisted survey reference.";
+    }
+    message += " Export or save them before leaving this page.";
+  }
   return '<div class="flag bad phrecovery" role="alert" data-photo-recovery="'+esc(key)+'">' +
     '<div>'+esc(message)+'</div>' +
     '<div class="phrecovery-actions">' +
@@ -3011,13 +3055,12 @@ function photoCaptureRecoveryHTML(key){
     '</div></div>';
 }
 
-function rememberPhotoCaptureFailures(key, entries){
-  entries.forEach(function(item){
-    photoCaptureRecoveries.push({
-      key:String(key),
-      index:item.index,
-      source:item.source
-    });
+function rememberPhotoCaptureFailure(key, item, kind){
+  photoCaptureRecoveries.push({
+    key:String(key),
+    index:item.index,
+    source:item.source,
+    kind:kind
   });
 }
 
@@ -3030,46 +3073,22 @@ function adjustPhotoCaptureRecoveriesAfterDelete(key, index){
   });
 }
 
-function mirrorPhotoToIndexedDB(dataUrl, dimensions){
-  var write;
-  try {
-    if(!window.AVLPhotoStore || typeof window.AVLPhotoStore.addDataUrl !== "function"){
-      throw new Error("Photo store module is unavailable");
-    }
-    write = window.AVLPhotoStore.addDataUrl(
-      dataUrl,
-      dimensions && dimensions.width,
-      dimensions && dimensions.height
-    );
-  } catch(error){
-    write = Promise.reject(error);
-  }
-
-  var tracked = Promise.resolve(write).then(function(record){
-    return record;
-  }).catch(function(error){
-    photoStoreLastError = error && error.message ? error.message : "Photo storage failed";
-    updateStorageBar();
-    return null;
-  });
-  photoStoreWrites.push(tracked);
-  tracked.then(function(){
-    var index = photoStoreWrites.indexOf(tracked);
-    if(index > -1) photoStoreWrites.splice(index,1);
-  });
-  return tracked;
+function setPhotoStoreFailure(kind, error){
+  photoStoreFailureKind = kind;
+  photoStoreLastError = error && error.message ? error.message : "Photo storage failed";
+  updateStorageBar();
 }
 
 function photoStoreIdle(){
-  var pending = photoStoreWrites.slice();
-  if(!pending.length) return Promise.resolve();
-  return Promise.all(pending).then(photoStoreIdle);
+  return photoCaptureIdle();
 }
 
 function photoStoreStatus(){
   return {
-    pending:photoStoreWrites.length,
-    lastError:photoStoreLastError
+    pending:photoCapturePendingCount,
+    lastError:photoStoreLastError,
+    kind:photoStoreFailureKind,
+    orphaned:orphanedPhotoIds.slice()
   };
 }
 
@@ -3080,14 +3099,133 @@ function pickPhoto(key){
   inp.click();
 }
 
-function photoCaptureSummary(total, added, failed, persisted){
-  if(!added || !persisted){
+function photoCaptureSummary(batch){
+  var total = batch.files.length;
+  var added = batch.durableCount;
+  if(!added){
     return total === 1 ? "Could not add that photo." : "Could not add those photos.";
   }
-  if(failed){
-    return added + " of " + total + " photos added. " + failed + " could not be processed.";
+  var message = added === 1 ? "Photo added." : added + " photos added.";
+  if(added !== total){
+    message = added + " of " + total + " photos added.";
   }
-  return added === 1 ? "Photo added." : added + " photos added.";
+  if(batch.failed){
+    message += " " + batch.failed + " could not be processed.";
+  }
+  var notPersisted = batch.added.length - batch.durableCount;
+  if(notPersisted){
+    message += " " + notPersisted + " could not be added to the survey.";
+  }
+  if(batch.inlineFallbacks){
+    message += " " + batch.inlineFallbacks +
+      (batch.inlineFallbacks === 1 ? " is" : " are") +
+      " stored in the survey file rather than device storage.";
+  }
+  if(batch.finalPersistFailed){
+    message += " Survey storage is full - export now.";
+  }
+  return message;
+}
+
+function descriptorFromPhotoRecord(record){
+  if(!record || !record.blob) throw new Error("Photo storage returned no record");
+  var descriptor = {
+    id:record.id,
+    mime:String(record.mime || "").toLowerCase(),
+    bytes:record.bytes,
+    width:record.width,
+    height:record.height
+  };
+  if(!isPhotoDescriptor(descriptor)) throw new Error("Photo storage returned an invalid record");
+  return descriptor;
+}
+
+function persistCaptureItem(batch, item, kind){
+  item.index = photoList(batch.key).indexOf(item.source);
+  batch.added.push(item);
+  var persisted = persistSurvey();
+  if(persisted){
+    batch.durableCount = batch.added.length;
+  } else {
+    rememberPhotoCaptureFailure(batch.key,item,kind);
+  }
+  return persisted;
+}
+
+function appendInlineCapture(batch, dataUrl){
+  if(!S.photos[batch.key]) S.photos[batch.key] = [];
+  var list = photoList(batch.key);
+  var item = {index:list.length,source:dataUrl};
+  list.push(dataUrl);
+  batch.inlineFallbacks++;
+  persistCaptureItem(batch,item,"memory-only");
+}
+
+function fallBackAfterStoredRecord(batch, descriptor, dataUrl, error){
+  var list = photoList(batch.key);
+  var index = list.indexOf(descriptor);
+  if(index > -1) list.splice(index,1);
+  delete missingPhotoIds[descriptor.id];
+  rememberOrphanedPhotoId(descriptor.id);
+  batch.storageDegraded = true;
+  batch.orphans++;
+  setPhotoStoreFailure("verify",error);
+  if(index < 0 || index > list.length) index = list.length;
+  list.splice(index,0,dataUrl);
+  batch.inlineFallbacks++;
+  persistCaptureItem(batch,{index:index,source:dataUrl},"memory-only");
+}
+
+function storeCapturedPhoto(batch, dataUrl, dimensions){
+  if(batch.storageDegraded){
+    appendInlineCapture(batch,dataUrl);
+    return Promise.resolve();
+  }
+  if(!window.AVLPhotoStore || typeof window.AVLPhotoStore.addDataUrl !== "function"){
+    batch.storageDegraded = true;
+    setPhotoStoreFailure("add",new Error("Photo storage is unavailable"));
+    appendInlineCapture(batch,dataUrl);
+    return Promise.resolve();
+  }
+
+  var write;
+  try {
+    write = window.AVLPhotoStore.addDataUrl(
+      dataUrl,
+      dimensions && dimensions.width,
+      dimensions && dimensions.height
+    );
+  } catch(error){
+    write = Promise.reject(error);
+  }
+
+  return Promise.resolve(write).then(function(record){
+    var descriptor;
+    try { descriptor = descriptorFromPhotoRecord(record); }
+    catch(error){
+      batch.storageDegraded = true;
+      batch.orphans++;
+      if(record && record.id) rememberOrphanedPhotoId(record.id);
+      setPhotoStoreFailure("verify",error);
+      appendInlineCapture(batch,dataUrl);
+      return;
+    }
+    if(!S.photos[batch.key]) S.photos[batch.key] = [];
+    var list = photoList(batch.key);
+    var index = list.length;
+    list.push(descriptor);
+    return hydratePhotoSource(batch.key,index).then(function(){
+      var liveIndex = list.indexOf(descriptor);
+      if(liveIndex < 0) throw new Error("Photo changed during storage verification");
+      persistCaptureItem(batch,{index:liveIndex,source:descriptor},"unreferenced");
+    }).catch(function(error){
+      fallBackAfterStoredRecord(batch,descriptor,dataUrl,error);
+    });
+  },function(error){
+    batch.storageDegraded = true;
+    setPhotoStoreFailure("add",error);
+    appendInlineCapture(batch,dataUrl);
+  });
 }
 
 function processPhotoBatch(key, files, compressor){
@@ -3096,58 +3234,102 @@ function processPhotoBatch(key, files, compressor){
     files:Array.prototype.slice.call(files || []),
     index:0,
     added:[],
-    failed:0
+    durableCount:0,
+    failed:0,
+    inlineFallbacks:0,
+    storageDegraded:false,
+    orphans:0,
+    finalPersistFailed:false
   };
   var runCompressor = compressor || compress;
-  clearTimeout(saveTimer);
+  if(saveTimer){
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    photoCaptureSaveSuppressed = true;
+  }
+  photoCaptureCritical = true;
+  photoCapturePendingCount = batch.files.length;
 
   function next(){
     if(batch.index >= batch.files.length){
-      var persisted = false;
-      if(batch.added.length){
-        persisted = persistSurvey();
-        if(!persisted) rememberPhotoCaptureFailures(batch.key,batch.added);
-        render();
+      photoCaptureCritical = false;
+      photoCapturePendingCount = 0;
+      if(photoCaptureSaveSuppressed){
+        photoCaptureSaveSuppressed = false;
+        if(batch.added.length){
+          if(persistSurvey()){
+            batch.durableCount = batch.added.length;
+          } else {
+            batch.finalPersistFailed = true;
+          }
+        } else {
+          save();
+        }
       }
-      toast(photoCaptureSummary(batch.files.length,batch.added.length,batch.failed,persisted));
+      if(batch.added.length) render();
+      toast(photoCaptureSummary(batch));
       return Promise.resolve({
         total:batch.files.length,
-        added:batch.added.length,
+        added:batch.durableCount,
+        captured:batch.added.length,
         failed:batch.failed,
-        persisted:persisted
+        inlineFallbacks:batch.inlineFallbacks,
+        orphans:batch.orphans,
+        persisted:batch.durableCount === batch.added.length
       });
     }
 
     var file = batch.files[batch.index++];
     return new Promise(function(resolve){
+      var settled = false;
+      var guard = setTimeout(function(){
+        finish(null,true);
+      },photoCompressTimeoutMs);
+      function finish(value,failed){
+        if(settled) return;
+        settled = true;
+        clearTimeout(guard);
+        if(failed) batch.failed++;
+        resolve(value);
+      }
       try {
         runCompressor(file, function(dataUrl, dimensions){
           if(dataUrl){
-            if(!S.photos[batch.key]) S.photos[batch.key] = [];
-            var list = photoList(batch.key);
-            var item = {index:list.length,source:dataUrl};
-            list.push(dataUrl);
-            batch.added.push(item);
-            mirrorPhotoToIndexedDB(dataUrl, dimensions);
+            finish({dataUrl:dataUrl,dimensions:dimensions},false);
           } else {
-            batch.failed++;
+            finish(null,true);
           }
-          resolve();
         });
       } catch(error){
-        batch.failed++;
-        resolve();
+        finish(null,true);
       }
-    }).then(next);
+    }).then(function(result){
+      if(!result) return;
+      return storeCapturedPhoto(batch,result.dataUrl,result.dimensions);
+    }).then(function(){
+      photoCapturePendingCount = Math.max(0,photoCapturePendingCount - 1);
+      return next();
+    });
   }
 
-  return next();
+  return next().catch(function(error){
+    photoCaptureCritical = false;
+    photoCapturePendingCount = 0;
+    if(photoCaptureSaveSuppressed){
+      photoCaptureSaveSuppressed = false;
+      save();
+    }
+    throw error;
+  });
 }
 
 function queuePhotoBatch(key, files, compressor){
-  var work = function(){ return processPhotoBatch(key,files,compressor); };
-  photoCaptureFlight = photoCaptureFlight.then(work,work);
-  return photoCaptureFlight;
+  var run = function(){ return processPhotoBatch(key,files,compressor); };
+  /* The shared flight must never latch rejected. A failed batch cannot
+     disable every capture that follows it. */
+  var result = photoCaptureFlight.then(run,run);
+  photoCaptureFlight = result.catch(function(){});
+  return result;
 }
 
 function photoCaptureIdle(){
@@ -3285,43 +3467,74 @@ function portableImportState(payload, useDescriptors){
   }
 
   var records = [];
+  var probeId = "";
   var chain = Promise.resolve();
-  jobs.forEach(function(job){
+  function verifyPortableRecord(record,job){
+    var descriptor = descriptorFromPhotoRecord(record);
+    if(record.blob.size !== descriptor.bytes ||
+       descriptor.bytes !== job.value.bytes ||
+       descriptor.mime !== job.value.mime.toLowerCase()){
+      throw new Error("Photo storage verification failed");
+    }
+    return record;
+  }
+  if(jobs.length){
     chain = chain.then(function(){
-      if(!window.AVLPhotoStore || typeof window.AVLPhotoStore.addDataUrl !== "function"){
+      if(!window.AVLPhotoStore ||
+         typeof window.AVLPhotoStore.addDataUrl !== "function" ||
+         typeof window.AVLPhotoStore.get !== "function" ||
+         (jobs.length > 1 && typeof window.AVLPhotoStore.addDataUrls !== "function")){
         throw new Error("Photo storage is unavailable");
       }
       return window.AVLPhotoStore.addDataUrl(
-        job.value.data,
-        job.value.width,
-        job.value.height
-      ).then(function(record){
-        if(!record || !record.id || !record.blob ||
-           record.bytes !== job.value.bytes ||
-           String(record.mime).toLowerCase() !== job.value.mime.toLowerCase()){
-          throw new Error("Photo storage verification failed");
-        }
-        records.push({job:job,record:record});
+        jobs[0].value.data,
+        jobs[0].value.width,
+        jobs[0].value.height
+      );
+    }).then(function(record){
+      if(record && record.id) probeId = record.id;
+      verifyPortableRecord(record,jobs[0]);
+      var read;
+      try { read = window.AVLPhotoStore.get(probeId); }
+      catch(error){ read = Promise.reject(error); }
+      return Promise.resolve(read);
+    }).then(function(record){
+      if(!record || record.id !== probeId) throw new Error("Photo storage verification failed");
+      verifyPortableRecord(record,jobs[0]);
+      records.push({job:jobs[0],record:record});
+      if(jobs.length === 1) return [];
+      return window.AVLPhotoStore.addDataUrls(jobs.slice(1).map(function(job){
+        return {
+          data:job.value.data,
+          width:job.value.width,
+          height:job.value.height
+        };
+      }));
+    }).then(function(batchRecords){
+      if(!Array.isArray(batchRecords) || batchRecords.length !== Math.max(0,jobs.length - 1)){
+        throw new Error("Photo storage verification failed");
+      }
+      batchRecords.forEach(function(record,index){
+        records.push({job:jobs[index + 1],record:record});
       });
     });
-  });
+  }
   return chain.then(function(){
     var seen = {};
     records.forEach(function(item){
-      if(seen[item.record.id]) throw new Error("Photo storage returned a duplicate id");
-      seen[item.record.id] = true;
-      data.photos[item.job.key].push({
-        id:item.record.id,
-        mime:String(item.record.mime).toLowerCase(),
-        bytes:item.record.bytes,
-        width:item.record.width,
-        height:item.record.height
-      });
+      var descriptor = descriptorFromPhotoRecord(verifyPortableRecord(item.record,item.job));
+      if(seen[descriptor.id]) throw new Error("Photo storage returned a duplicate id");
+      seen[descriptor.id] = true;
+      data.photos[item.job.key].push(descriptor);
     });
     var result = validate(data);
     if(!result.ok) throw new Error(result.reason);
     return coerce(data);
   }).catch(function(){
+    if(probeId) rememberOrphanedPhotoId(probeId);
+    records.forEach(function(item){
+      if(item.record && item.record.id) rememberOrphanedPhotoId(item.record.id);
+    });
     Object.keys(data.photos).forEach(function(key){ data.photos[key] = []; });
     jobs.forEach(function(job){ data.photos[job.key].push(job.value.data); });
     return coerce(data);
@@ -3367,14 +3580,12 @@ function applyImport(text){
       toast("Not imported: This file lists photos that are stored on the device it came from. Export again from that device.");
       return false;
     }
-    /* B2a remains data-inert: portable v3 files are accepted, but their
-       photos remain inline until B2b deliberately enables descriptor writes. */
-    return applyPortableImport(parsed,false);
+    return applyPortableImport(parsed,true);
   }
 
   var res = migrate(parsed);
   if(!res.ok){ toast("Not imported: " + res.reason); return false; }
-  if(SCHEMA === 2 && stateHasPhotoDescriptors(res.data)){
+  if(stateHasPhotoDescriptors(res.data)){
     toast("Not imported: This file lists photos that are stored on the device it came from. Export again from that device.");
     return false;
   }
@@ -3443,9 +3654,10 @@ function printPhotos(key){
 
 function buildPrintNow(){
   var h = "";
-  h += '<h1>AVL Pre-Install Site Survey</h1>';
+  h += '<h1>AV Pre-Install Site Survey</h1>';
   h += '<div class="meta">' + esc(S.visit.client || "—") + ' &middot; ' + esc(S.visit.site || "—") +
-       ' &middot; ' + esc(S.visit.date || "—") + ' &middot; Surveyor: ' + esc(S.visit.surveyor || "—") + '</div>';
+       ' &middot; ' + esc(S.visit.date || "—") + ' &middot; Surveyor: ' + esc(S.visit.surveyor || "—") +
+       ' &middot; Prepared with Preplot</div>';
   h += '<h2>Visit details</h2>' + tableFor("visit", VISIT);
   if(!S.skipped["log|main"]){
     var logT = tableFor("log", LOGISTICS), logP = printPhotos("log|main");
@@ -3742,6 +3954,10 @@ window.__avl = {
   photoStoreIdle:photoStoreIdle,
   photoStoreStatus:photoStoreStatus,
   photoCaptureIdle:photoCaptureIdle,
+  setPhotoCompressTimeoutForTest:function(ms){
+    photoCompressTimeoutMs = Math.max(1,parseInt(ms,10) || 15000);
+  },
+  orphanedPhotoIds:function(){ return orphanedPhotoIds.slice(); },
   processPhotoBatchForTest:function(key,files,compressor){
     return queuePhotoBatch(key,files,compressor);
   },

@@ -1,5 +1,5 @@
-/* PR A of the photo-storage transition. New captures are mirrored here, but
-   schema v2 remains authoritative until the later migration changeset. */
+/* Authoritative storage for newly captured photo bytes. Survey state keeps
+   compact descriptors and portable exports re-inline each photo. */
 (function(global){
   "use strict";
 
@@ -139,6 +139,21 @@
     return addRecord(record);
   }
 
+  function addDataUrls(items){
+    var records;
+    try {
+      records = (items || []).map(function(item){
+        return recordFromDataUrl(item.data, item.width, item.height);
+      });
+    } catch(error){
+      return Promise.reject(error);
+    }
+    return transaction("readwrite", function(store){
+      records.forEach(function(record){ store.add(record); });
+      return records;
+    });
+  }
+
   function get(id){
     return open().then(function(db){
       return new Promise(function(resolve, reject){
@@ -220,6 +235,7 @@
     recordFromDataUrl:recordFromDataUrl,
     addRecord:addRecord,
     addDataUrl:addDataUrl,
+    addDataUrls:addDataUrls,
     get:get,
     keys:keys,
     all:all,
