@@ -176,6 +176,7 @@ button.btn:active{transform:translateY(1px)}
 .phvsave:disabled{opacity:.58;cursor:default}
 .phvdownload{border:1px solid rgba(255,255,255,.5);background:transparent;color:#fff}
 .phvdownload[hidden]{display:none}
+.phvdownload:disabled{opacity:.45;cursor:default}
 .phvhelp,.phvstatus{flex:0 0 100%;text-align:center;font-size:12px;line-height:1.35;color:#cbd5e1}
 .phvstatus:empty{display:none}
 
@@ -314,7 +315,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.8.0";
+var APP_VERSION = "1.9.0";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -527,6 +528,29 @@ function normalize(p){
   return null;
 }
 
+function isPhotoDescriptor(value){
+  return !!value && typeof value === "object" && !Array.isArray(value) &&
+    typeof value.id === "string" && value.id.length > 0 &&
+    typeof value.mime === "string" && value.mime.length > 0 &&
+    typeof value.bytes === "number" && isFinite(value.bytes) && value.bytes >= 0 &&
+    Math.floor(value.bytes) === value.bytes &&
+    typeof value.width === "number" && isFinite(value.width) && value.width >= 0 &&
+    Math.floor(value.width) === value.width &&
+    typeof value.height === "number" && isFinite(value.height) && value.height >= 0 &&
+    Math.floor(value.height) === value.height;
+}
+function photoEntryValid(value){
+  return typeof value === "string" || isPhotoDescriptor(value);
+}
+function stateHasPhotoDescriptors(data){
+  var photos = data && data.photos;
+  if(!photos || typeof photos !== "object") return false;
+  return Object.keys(photos).some(function(key){
+    var list = photos[key];
+    return Array.isArray(list) && list.some(isPhotoDescriptor);
+  });
+}
+
 /* Reject damaged payloads before they can replace good survey data. */
 function validate(d){
   if(!d || typeof d !== "object") return {ok:false, reason:"not an object"};
@@ -546,6 +570,21 @@ function validate(d){
     var v = d[objs[i]];
     if(typeof v !== "undefined" && (v === null || typeof v !== "object" || Array.isArray(v))){
       return {ok:false, reason:objs[i] + " is malformed"};
+    }
+  }
+  var photoIds = {};
+  var photoKeys = Object.keys(d.photos || {});
+  for(var p=0;p<photoKeys.length;p++){
+    var list = d.photos[photoKeys[p]];
+    if(!Array.isArray(list)) return {ok:false, reason:"photo bucket " + photoKeys[p] + " is not a list"};
+    for(var q=0;q<list.length;q++){
+      if(!photoEntryValid(list[q])){
+        return {ok:false, reason:"photo " + photoKeys[p] + "|" + q + " is malformed"};
+      }
+      if(isPhotoDescriptor(list[q])){
+        if(photoIds[list[q].id]) return {ok:false, reason:"photo id " + list[q].id + " is duplicated"};
+        photoIds[list[q].id] = true;
+      }
     }
   }
   return {ok:true};
@@ -619,7 +658,7 @@ function load(){
   if(res.from < SCHEMA) save();
 }
 
-function envelope(){
+function stateEnvelope(){
   return {
     app:"avl-survey",
     schema:SCHEMA,
@@ -628,11 +667,81 @@ function envelope(){
     data:S
   };
 }
+function envelope(){ return stateEnvelope(); }
+
+function blobToDataUrl(blob){
+  return new Promise(function(resolve,reject){
+    var reader = new FileReader();
+    reader.onload = function(){ resolve(String(reader.result)); };
+    reader.onerror = function(){ reject(reader.error || new Error("Could not read photo")); };
+    try { reader.readAsDataURL(blob); }
+    catch(error){ reject(error); }
+  });
+}
+function portablePhotoEntry(key, index){
+  var entry = photoValue(key,index);
+  if(typeof entry === "string"){
+    return Promise.resolve({
+      mime:photoMime(entry),
+      width:0,
+      height:0,
+      bytes:photoEntryBytes(entry),
+      data:entry
+    });
+  }
+  if(!isPhotoDescriptor(entry)) return Promise.reject(new Error("Photo entry is malformed"));
+  return hydratePhotoSource(key,index).then(function(source){
+    return blobToDataUrl(source.blob).then(function(data){
+      return {
+        mime:entry.mime,
+        width:entry.width,
+        height:entry.height,
+        bytes:entry.bytes,
+        data:data
+      };
+    });
+  });
+}
+function portableEnvelope(){
+  /* Clone state without serialising inline photo payloads only to throw that
+     copy away. This keeps the export path bounded on a 50–60 photo survey. */
+  var data = JSON.parse(JSON.stringify({
+    visit:S.visit,
+    log:S.log,
+    rooms:S.rooms,
+    photos:{},
+    skipped:S.skipped,
+    ui:S.ui,
+    meta:S.meta
+  }));
+  var keys = Object.keys(photoBuckets());
+  var chain = Promise.resolve();
+  keys.forEach(function(key){
+    data.photos[key] = [];
+    photoList(key).forEach(function(entry,index){
+      chain = chain.then(function(){
+        return portablePhotoEntry(key,index).then(function(portable){
+          data.photos[key].push(portable);
+        });
+      });
+    });
+  });
+  return chain.then(function(){
+    return {
+      app:"avl-survey",
+      schema:3,
+      photoFormat:"inline",
+      appVersion:APP_VERSION,
+      exportedAt:nowISO(),
+      data:data
+    };
+  });
+}
 
 var saveTimer = null;
 function persistSurvey(){
   if(S.meta) S.meta.updated = nowISO();
-  var ok = store.set(KEY, JSON.stringify(envelope()));
+  var ok = store.set(KEY, JSON.stringify(stateEnvelope()));
   updateStorageBar();
   return ok;
 }
@@ -643,10 +752,13 @@ function save(){
   }, 250);
 }
 
-/* Photos remain base64 in localStorage for now. Measure that binding ~5 MB
-   ceiling directly; navigator.storage.estimate() reports a different quota. */
+/* Normal captures remain base64 in localStorage for B2a. Measure that binding
+   ~5 MB ceiling directly; navigator.storage.estimate() reports a different
+   quota and is shown separately for future device-stored descriptors. */
 var LS_CAP = 5 * 1024 * 1024;
 var deviceInfo = {used:0, quota:0, known:false};
+var photoIntegrityState = "checking";
+var missingPhotoIds = {};
 var storagePersistState = "checking";
 var storagePersistRequested = false;
 
@@ -672,6 +784,20 @@ function photoCount(){
     n += photoList(k).length;
   });
   return n;
+}
+function photoStorageCounts(){
+  var counts = {inline:0, descriptors:0, missing:0};
+  Object.keys(photoBuckets()).forEach(function(key){
+    photoList(key).forEach(function(entry){
+      if(isPhotoDescriptor(entry)){
+        counts.descriptors++;
+        if(missingPhotoIds[entry.id]) counts.missing++;
+      } else {
+        counts.inline++;
+      }
+    });
+  });
+  return counts;
 }
 function hasSurveyWork(){
   if(S.rooms.length || photoCount()) return true;
@@ -705,8 +831,27 @@ function storageHTML(){
     h += '<div class="flag" style="margin-top:8px">Over ' + pct + '% of the survey storage limit. Export and start a fresh survey soon.</div>';
   }
   if(deviceInfo.known){
-    h += '<div class="hint" style="margin-top:6px">Device storage used by this app, including the offline copy: ' +
+    h += '<div class="hint" style="margin-top:6px">Device storage used by this app (estimate): ' +
       fmtMB(deviceInfo.used) + '</div>';
+  }
+  var photoStorage = photoStorageCounts();
+  if(photoStorage.descriptors){
+    var storedCount = photoStorage.descriptors - photoStorage.missing;
+    if(photoIntegrityState === "unknown"){
+      h += '<div class="flag" style="margin-top:8px">Photo storage could not be checked. Export after every visit.</div>';
+    } else {
+      h += '<div class="hint" style="margin-top:6px">' + storedCount + ' photo' +
+        (storedCount === 1 ? '' : 's') + ' in device storage</div>';
+    }
+    h += '<div class="hint" style="margin-top:6px">' + photoStorage.inline + ' photo' +
+      (photoStorage.inline === 1 ? '' : 's') + ' stored in the survey file</div>';
+    if(photoStorage.missing){
+      h += '<div class="flag bad" style="margin-top:8px">' + photoStorage.missing + ' photo' +
+        (photoStorage.missing === 1 ? '' : 's') + ' missing from device storage</div>';
+    } else if(photoIntegrityState === "checking"){
+      h += '<div class="hint" style="margin-top:6px">Photo integrity: checking...</div>';
+    }
+    h += '<div class="hint" style="margin-top:6px">New photos are stored in device storage rather than in the survey file, so this figure stays low.</div>';
   }
   if(storagePersistState === "granted"){
     h += '<div class="hint" style="margin-top:6px">Storage retention: browser has agreed to keep this data. Export after every visit.</div>';
@@ -731,6 +876,50 @@ function refreshStorageEstimate(){
     deviceInfo = {used:e.usage || 0, quota:e.quota || 0, known:true};
     updateStorageBar();
   }).catch(function(){});
+}
+
+function descriptorIds(){
+  var ids = [];
+  Object.keys(photoBuckets()).forEach(function(key){
+    photoList(key).forEach(function(entry){
+      if(isPhotoDescriptor(entry)) ids.push(entry.id);
+    });
+  });
+  return ids;
+}
+function refreshPhotoIntegrity(){
+  var ids = descriptorIds();
+  missingPhotoIds = {};
+  if(!ids.length){
+    photoIntegrityState = "ready";
+    updateStorageBar();
+    return Promise.resolve({missing:0,total:0});
+  }
+  photoIntegrityState = "checking";
+  updateStorageBar();
+  if(!window.AVLPhotoStore || typeof window.AVLPhotoStore.keys !== "function"){
+    photoIntegrityState = "unknown";
+    updateStorageBar();
+    return Promise.resolve({missing:0,total:ids.length,unknown:true});
+  }
+  var query;
+  try { query = window.AVLPhotoStore.keys(); }
+  catch(error){ query = Promise.reject(error); }
+  return Promise.resolve(query).then(function(keys){
+    var present = {};
+    keys.forEach(function(id){ present[String(id)] = true; });
+    ids.forEach(function(id){
+      if(!present[id]) missingPhotoIds[id] = true;
+    });
+    photoIntegrityState = "ready";
+    updateStorageBar();
+    hydratePhotoThumbnails();
+    return {missing:Object.keys(missingPhotoIds).length,total:ids.length};
+  }).catch(function(){
+    photoIntegrityState = "unknown";
+    updateStorageBar();
+    return {missing:0,total:ids.length,unknown:true};
+  });
 }
 
 function settleStoragePersistence(state){
@@ -797,7 +986,7 @@ function recheckStoragePersistence(){
 }
 
 function snapshot(){
-  try { return store.set(BACKUP_KEY, JSON.stringify(envelope())); }
+  try { return store.set(BACKUP_KEY, JSON.stringify(stateEnvelope())); }
   catch(e){ return false; }
 }
 function hasBackup(){ return !!store.get(BACKUP_KEY); }
@@ -933,11 +1122,32 @@ function photoExtension(mime){
   };
   return types[mime] || "img";
 }
-function photoMime(dataUrl){
-  var raw = String(dataUrl || "");
+function photoMime(entry){
+  if(isPhotoDescriptor(entry)) return entry.mime.toLowerCase();
+  var raw = String(entry || "");
   var comma = raw.indexOf(",");
   if(raw.slice(0,5) !== "data:" || comma < 6) return "application/octet-stream";
   return (raw.slice(5,comma).split(";")[0] || "application/octet-stream").toLowerCase();
+}
+function inlinePhotoBytes(dataUrl){
+  var raw = String(dataUrl || "");
+  var comma = raw.indexOf(",");
+  if(raw.slice(0,5) !== "data:" || comma < 6) return 0;
+  var head = raw.slice(5,comma).split(";");
+  var payload = raw.slice(comma + 1);
+  if(head.indexOf("base64") > -1){
+    var clean = payload.replace(/\s/g,"");
+    var padding = clean.slice(-2) === "==" ? 2 : (clean.slice(-1) === "=" ? 1 : 0);
+    return Math.max(0, Math.floor(clean.length * 3 / 4) - padding);
+  }
+  try { return decodeDataUrl(raw).bytes.length; }
+  catch(error){ return 0; }
+}
+function photoEntryBytes(entry){
+  return isPhotoDescriptor(entry) ? entry.bytes : inlinePhotoBytes(entry);
+}
+function photoEntryIdentity(entry){
+  return isPhotoDescriptor(entry) ? entry.id : entry;
 }
 function photoPad(value, width){
   var out = String(value);
@@ -1006,7 +1216,7 @@ function photoManifest(){
         sectionId:sectionId,
         sectionLabel:sectionLabel,
         mime:mime,
-        sourceLength:String(source || "").length
+        bytes:photoEntryBytes(source)
       });
     });
   }
@@ -1089,6 +1299,7 @@ function dataUrlToFile(dataUrl, key, index){
    ============================================================ */
 var photoAssets = {};
 var retiredPhotoAssets = [];
+var pendingPhotoAssets = {};
 
 function photoBuckets(){
   return S.photos || {};
@@ -1103,30 +1314,45 @@ function photoValue(key, index){
 function photoToken(key, index){
   return String(key) + "|" + String(index);
 }
+function photoAssetKey(key, index, entry){
+  return isPhotoDescriptor(entry)
+    ? "id:" + entry.id
+    : "src:" + photoToken(key,index);
+}
 function photoSource(key, index){
   index = parseInt(index,10);
-  var source = photoValue(key,index);
-  if(typeof source !== "string") return null;
+  var entry = photoValue(key,index);
+  if(!photoEntryValid(entry)) return null;
   var token = photoToken(key,index);
-  var asset = photoAssets[token];
-  if(asset && asset.source === source){
+  var identity = photoEntryIdentity(entry);
+  var assetKey = photoAssetKey(key,index,entry);
+  var asset = photoAssets[assetKey];
+  if(asset && asset.identity === identity && !asset.revoked){
+    asset.key = String(key);
+    asset.index = index;
     return {
-      kind:"inline",
+      kind:isPhotoDescriptor(entry) ? "stored" : "inline",
       mime:asset.mime,
       blob:asset.blob,
       url:asset.url,
-      source:source,
+      source:identity,
+      identity:identity,
+      entry:entry,
       token:token,
+      assetKey:assetKey,
       asset:asset
     };
   }
   return {
-    kind:"inline",
-    mime:photoMime(source),
+    kind:isPhotoDescriptor(entry) ? "stored" : "inline",
+    mime:photoMime(entry),
     blob:null,
     url:"",
-    source:source,
+    source:identity,
+    identity:identity,
+    entry:entry,
     token:token,
+    assetKey:assetKey,
     asset:null
   };
 }
@@ -1153,66 +1379,171 @@ function materializePhotoSource(key, index){
   var source = photoSource(key,index);
   if(!source) throw new Error("Photo is unavailable");
   if(source.asset && !source.asset.revoked) return source;
+  if(source.kind === "stored") throw new Error("Photo is not resident");
 
-  var old = photoAssets[source.token];
-  if(old && old.source !== source.source){
-    delete photoAssets[source.token];
+  var old = photoAssets[source.assetKey];
+  if(old && old.identity !== source.identity){
+    delete photoAssets[source.assetKey];
     revokePhotoAsset(old,false);
   }
-  var decoded = decodeDataUrl(source.source);
+  var decoded = decodeDataUrl(source.entry);
   var blob = new Blob([decoded.bytes], {type:decoded.mime});
   var asset = {
     key:String(key),
     index:parseInt(index,10),
     token:source.token,
-    source:source.source,
+    assetKey:source.assetKey,
+    source:source.identity,
+    identity:source.identity,
     mime:decoded.mime,
     blob:blob,
     url:URL.createObjectURL(blob),
     revoked:false,
     retired:false
   };
-  photoAssets[source.token] = asset;
+  photoAssets[source.assetKey] = asset;
   return {
     kind:"inline",
     mime:asset.mime,
     blob:asset.blob,
     url:asset.url,
     source:asset.source,
+    identity:asset.identity,
+    entry:source.entry,
     token:asset.token,
+    assetKey:asset.assetKey,
     asset:asset
   };
 }
+function missingPhotoError(){
+  var error = new Error("Photo is missing from device storage");
+  error.code = "PHOTO_MISSING";
+  return error;
+}
 function hydratePhotoSource(key, index){
-  return new Promise(function(resolve,reject){
-    setTimeout(function(){
-      try { resolve(materializePhotoSource(key,index)); }
-      catch(error){ reject(error); }
-    },0);
+  var requested = photoSource(key,index);
+  if(!requested) return Promise.reject(new Error("Photo is unavailable"));
+  if(requested.asset && !requested.asset.revoked) return Promise.resolve(requested);
+  if(requested.kind === "inline"){
+    return new Promise(function(resolve,reject){
+      setTimeout(function(){
+        try { resolve(materializePhotoSource(key,index)); }
+        catch(error){ reject(error); }
+      },0);
+    });
+  }
+  if(missingPhotoIds[requested.entry.id]) return Promise.reject(missingPhotoError());
+  if(!window.AVLPhotoStore || typeof window.AVLPhotoStore.get !== "function"){
+    return Promise.reject(new Error("Photo storage is unavailable"));
+  }
+  var assetKey = requested.assetKey;
+  if(!pendingPhotoAssets[assetKey]){
+    var read;
+    try { read = window.AVLPhotoStore.get(requested.entry.id); }
+    catch(error){ read = Promise.reject(error); }
+    pendingPhotoAssets[assetKey] = Promise.resolve(read).then(function(record){
+      if(!record || !record.blob){
+        missingPhotoIds[requested.entry.id] = true;
+        photoIntegrityState = "ready";
+        updateStorageBar();
+        throw missingPhotoError();
+      }
+      var blob = record.blob;
+      var mime = String(record.mime || blob.type || requested.entry.mime).toLowerCase();
+      if(blob.size !== requested.entry.bytes || mime !== requested.entry.mime.toLowerCase()){
+        missingPhotoIds[requested.entry.id] = true;
+        updateStorageBar();
+        throw missingPhotoError();
+      }
+      var asset = {
+        key:String(key),
+        index:parseInt(index,10),
+        token:requested.token,
+        assetKey:assetKey,
+        source:requested.identity,
+        identity:requested.identity,
+        mime:mime,
+        blob:blob,
+        url:URL.createObjectURL(blob),
+        revoked:false,
+        retired:false
+      };
+      photoAssets[assetKey] = asset;
+      delete missingPhotoIds[requested.entry.id];
+      return asset;
+    });
+    pendingPhotoAssets[assetKey].then(function(){
+      delete pendingPhotoAssets[assetKey];
+    },function(){
+      delete pendingPhotoAssets[assetKey];
+    });
+  }
+  return pendingPhotoAssets[assetKey].then(function(){
+    var live = photoSource(key,index);
+    if(!live || live.assetKey !== assetKey || live.identity !== requested.identity){
+      throw new Error("Photo changed while loading");
+    }
+    return live;
   });
 }
+function photoEntryMatches(key, index, source){
+  var live = photoSource(key,index);
+  return !!live && !!source &&
+    live.assetKey === source.assetKey &&
+    live.identity === source.identity;
+}
 function reconcilePhotoAssets(){
-  Object.keys(photoAssets).forEach(function(token){
-    var asset = photoAssets[token];
-    if(photoValue(asset.key,asset.index) !== asset.source){
-      delete photoAssets[token];
+  Object.keys(photoAssets).forEach(function(assetKey){
+    var asset = photoAssets[assetKey];
+    if(!photoEntryMatches(asset.key,asset.index,{
+      assetKey:asset.assetKey,
+      identity:asset.identity
+    })){
+      delete photoAssets[assetKey];
       revokePhotoAsset(asset,false);
     }
   });
 }
+function markPhotoThumbnailMissing(img){
+  if(!img || !img.isConnected) return;
+  img.removeAttribute("src");
+  img.setAttribute("data-photo-error","1");
+  var button = img.closest("[data-viewph]");
+  if(button){
+    button.classList.remove("ready");
+    button.classList.add("missing");
+    var label = button.querySelector(".phload");
+    if(label) label.textContent = "Photo missing";
+  }
+}
 function fillPhotoThumbnail(img, source){
   if(!img || !img.isConnected || !source || !source.url) return;
   if(img.getAttribute("data-photo-token") !== source.token) return;
-  if(photoValue(img.getAttribute("data-photo-key"),img.getAttribute("data-photo-index")) !== source.source) return;
+  if(img.getAttribute("data-photo-asset") !== source.assetKey) return;
+  if(!photoEntryMatches(
+    img.getAttribute("data-photo-key"),
+    img.getAttribute("data-photo-index"),
+    source
+  )) return;
   img.src = source.url;
+  img.removeAttribute("data-photo-error");
   var button = img.closest("[data-viewph]");
-  if(button) button.classList.add("ready");
+  if(button){
+    button.classList.remove("missing");
+    button.classList.add("ready");
+  }
 }
 function hydratePhotoThumbnails(){
   reconcilePhotoAssets();
   Array.prototype.forEach.call(document.querySelectorAll("img[data-photo-token]"), function(img){
+    if(img.offsetParent === null) return;
     var key = img.getAttribute("data-photo-key");
     var index = parseInt(img.getAttribute("data-photo-index"),10);
+    var entry = photoValue(key,index);
+    if(isPhotoDescriptor(entry) && missingPhotoIds[entry.id]){
+      markPhotoThumbnailMissing(img);
+      return;
+    }
     var source = photoSource(key,index);
     if(source && source.url){
       fillPhotoThumbnail(img,source);
@@ -1220,15 +1551,16 @@ function hydratePhotoThumbnails(){
     }
     hydratePhotoSource(key,index).then(function(loaded){
       fillPhotoThumbnail(img,loaded);
-    }).catch(function(){
-      if(img.isConnected) img.setAttribute("data-photo-error","1");
+    }).catch(function(error){
+      if(error && error.code === "PHOTO_MISSING") markPhotoThumbnailMissing(img);
+      else if(img.isConnected) img.setAttribute("data-photo-error","1");
     });
   });
 }
 function revokeAllPhotoAssets(){
-  Object.keys(photoAssets).forEach(function(token){
-    revokePhotoAsset(photoAssets[token],true);
-    delete photoAssets[token];
+  Object.keys(photoAssets).forEach(function(assetKey){
+    revokePhotoAsset(photoAssets[assetKey],true);
+    delete photoAssets[assetKey];
   });
   retiredPhotoAssets.forEach(function(asset){ revokePhotoAsset(asset,true); });
   retiredPhotoAssets = [];
@@ -1377,7 +1709,7 @@ function packageHead(){
   };
 }
 function packageSource(entry){
-  return photoValue(entry.key,entry.bucketIndex);
+  return photoEntryIdentity(photoValue(entry.key,entry.bucketIndex));
 }
 function readPhotoSource(entry){
   var identity = packageSource(entry);
@@ -1430,7 +1762,7 @@ function photoPackageIsCurrent(pkg){
   }
   var fields = [
     "ref","filename","key","bucketIndex","roomName",
-    "sectionLabel","mime","sourceLength"
+    "sectionLabel","mime","bytes"
   ];
   for(var i=0;i<current.length;i++){
     for(var j=0;j<fields.length;j++){
@@ -1496,8 +1828,40 @@ function refreshPhotoPackageUI(){
   var wrap = document.getElementById("photopackagewrap");
   if(wrap) wrap.innerHTML = photoPackageHTML();
 }
+function missingPhotoPackageMessage(count){
+  return count + " photo" + (count === 1 ? " is" : "s are") +
+    " missing from device storage. The package cannot be prepared.";
+}
 function preparePhotoPackage(){
   if(photoPackageFlight || (preparedPhotoPackage && preparedPhotoPackage.status === "preparing")){
+    return false;
+  }
+  var storageCounts = photoStorageCounts();
+  if(storageCounts.descriptors && photoIntegrityState === "checking"){
+    preparedPhotoPackage = {
+      status:"preparing",
+      message:"",
+      total:photoCount(),
+      progress:0,
+      manifest:[],
+      sources:[],
+      head:null
+    };
+    refreshPhotoPackageUI();
+    refreshPhotoIntegrity().then(function(){
+      preparedPhotoPackage = null;
+      preparePhotoPackage();
+    });
+    return true;
+  }
+  if(storageCounts.missing){
+    preparedPhotoPackage = {
+      status:"error",
+      message:missingPhotoPackageMessage(storageCounts.missing),
+      total:photoCount(),
+      progress:0
+    };
+    refreshPhotoPackageUI();
     return false;
   }
   releasePhotoPackage(preparedPhotoPackage);
@@ -1548,29 +1912,40 @@ function preparePhotoPackage(){
   }
   function finishPreparation(){
     if(preparedPhotoPackage !== pkg) return;
-    try {
-      var json = JSON.stringify(envelope(),null,2);
-      var entries = pkg.photoEntries.slice();
-      entries.push({name:"survey-export.json",bytes:textBytes(json)});
-      entries.push({name:"photo-manifest.csv",bytes:photoManifestCSV(pkg.manifest)});
-      var archive = zipStore(entries);
-      pkg.file = new File(
-        [archive],
-        slug() + "-package.zip",
-        {type:"application/zip",lastModified:Date.now()}
-      );
-      pkg.photoEntries = [];
-      if(!photoPackageIsCurrent(pkg)){
-        stalePreparation();
-        return;
+    portableEnvelope().then(function(portable){
+      if(preparedPhotoPackage !== pkg) return;
+      try {
+        var json = JSON.stringify(portable,null,2);
+        var entries = pkg.photoEntries.slice();
+        entries.push({name:"survey-export.json",bytes:textBytes(json)});
+        entries.push({name:"photo-manifest.csv",bytes:photoManifestCSV(pkg.manifest)});
+        var archive = zipStore(entries);
+        pkg.file = new File(
+          [archive],
+          slug() + "-package.zip",
+          {type:"application/zip",lastModified:Date.now()}
+        );
+        pkg.photoEntries = [];
+        if(!photoPackageIsCurrent(pkg)){
+          stalePreparation();
+          return;
+        }
+        pkg.status = "ready";
+        pkg.progress = pkg.total;
+        pkg.message = "";
+        refreshPhotoPackageUI();
+      } catch(error){
+        failPreparation();
       }
-      pkg.status = "ready";
-      pkg.progress = pkg.total;
-      pkg.message = "";
-      refreshPhotoPackageUI();
-    } catch(error){
-      failPreparation();
-    }
+    }).catch(function(error){
+      if(error && error.code === "PHOTO_MISSING"){
+        pkg.status = "error";
+        pkg.message = missingPhotoPackageMessage(Math.max(1,photoStorageCounts().missing));
+        refreshPhotoPackageUI();
+      } else {
+        failPreparation();
+      }
+    });
   }
   function nextPhoto(){
     if(preparedPhotoPackage !== pkg) return;
@@ -1585,7 +1960,7 @@ function preparePhotoPackage(){
       if(preparedPhotoPackage !== pkg) return;
       if(source.identity !== pkg.sources[index] ||
          source.mime !== entry.mime ||
-         String(source.identity || "").length !== entry.sourceLength){
+         source.bytes.length !== entry.bytes){
         stalePreparation();
         return;
       }
@@ -1595,8 +1970,14 @@ function preparePhotoPackage(){
       });
       index++;
       setTimeout(nextPhoto,0);
-    }).catch(function(){
-      failPreparation();
+    }).catch(function(error){
+      if(error && error.code === "PHOTO_MISSING"){
+        pkg.status = "error";
+        pkg.message = missingPhotoPackageMessage(Math.max(1,photoStorageCounts().missing));
+        refreshPhotoPackageUI();
+      } else {
+        failPreparation();
+      }
     });
   }
   setTimeout(nextPhoto,0);
@@ -1713,12 +2094,13 @@ function refreshPhotoShareUI(){
   var busy = !!photoShareFlight;
   var id = photoIdentity(photoViewer.key, photoViewer.index);
   var resident = !!(photoViewer.file && photoViewer.asset &&
-    photoViewer.asset.source === photoValue(photoViewer.key,photoViewer.index));
-  photoViewer.save.disabled = busy || !resident;
+    photoViewer.asset.identity === photoEntryIdentity(photoValue(photoViewer.key,photoViewer.index)));
+  photoViewer.save.disabled = busy || !resident || photoViewer.missing;
   photoViewer.save.textContent = busy
     ? "Opening share sheet\u2026"
-    : (resident ? "Save photo\u2026" : "Preparing photo\u2026");
-  photoViewer.download.hidden = photoViewer.fallbackId !== id;
+    : (resident ? "Save photo\u2026" : (photoViewer.missing ? "Photo missing" : "Preparing photo\u2026"));
+  photoViewer.download.hidden = !photoViewer.missing && photoViewer.fallbackId !== id;
+  photoViewer.download.disabled = photoViewer.missing;
   photoViewer.help.textContent = photoViewer.notice || defaultPhotoShareHelp();
   photoViewer.status.textContent = photoViewer.message || "";
 }
@@ -1750,7 +2132,7 @@ function sharePhoto(key, index){
     photoViewer.key === String(key) &&
     photoViewer.index === index &&
     photoViewer.asset &&
-    photoViewer.asset.source === photoValue(key,index)
+    photoViewer.asset.identity === photoEntryIdentity(photoValue(key,index))
       ? photoViewer.file
       : null;
   if(!file){
@@ -1818,7 +2200,7 @@ function downloadPhoto(key, index){
       photoViewer.key === String(key) &&
       photoViewer.index === index &&
       photoViewer.asset &&
-      photoViewer.asset.source === photoValue(key,index)
+      photoViewer.asset.identity === photoEntryIdentity(photoValue(key,index))
         ? photoViewer.asset
         : materializePhotoSource(key,index).asset;
     var file = new File(
@@ -1868,6 +2250,7 @@ function updatePhotoViewer(){
   var load = ++photoViewer.load;
   photoViewer.asset = null;
   photoViewer.file = null;
+  photoViewer.missing = false;
   flushRetiredPhotoAssets();
   photoViewer.image.removeAttribute("src");
   photoViewer.image.alt = "Photo " + number + " of " + list.length + " \u2014 " + photoContext(photoViewer.key);
@@ -1881,7 +2264,7 @@ function updatePhotoViewer(){
   hydratePhotoSource(key,index).then(function(source){
     if(!photoViewer || photoViewer.load !== load ||
        photoViewer.key !== key || photoViewer.index !== index ||
-       source.source !== photoValue(key,index)){
+       !photoEntryMatches(key,index,source)){
       return;
     }
     photoViewer.asset = source.asset;
@@ -1892,9 +2275,14 @@ function updatePhotoViewer(){
     );
     photoViewer.image.src = source.url;
     refreshPhotoShareUI();
-  }).catch(function(){
+  }).catch(function(error){
     if(!photoViewer || photoViewer.load !== load) return;
-    photoViewer.message = "This image could not be prepared.";
+    if(error && error.code === "PHOTO_MISSING"){
+      photoViewer.missing = true;
+      photoViewer.message = "This photo is not in device storage. It cannot be shared or included in the package.";
+    } else {
+      photoViewer.message = "This image could not be prepared.";
+    }
     refreshPhotoShareUI();
   });
 }
@@ -1972,7 +2360,7 @@ function openPhotoViewer(key, index, notice){
   var lock = lockPhotoViewerScroll();
   photoViewer = {
     key:String(key), index:index, returnIndex:index, overlay:overlay, scroll:lock,
-    fallbackId:null, message:"", notice:notice || "", load:0, asset:null, file:null,
+    fallbackId:null, message:"", notice:notice || "", load:0, asset:null, file:null, missing:false,
     image:overlay.querySelector(".phvimage"),
     title:overlay.querySelector(".phvtitle"),
     count:overlay.querySelector(".phvtop .phvcount"),
@@ -2140,10 +2528,12 @@ function photosHTML(key){
       var viewLabel = "View photo " + (i + 1) + " of " + list.length;
       var source = photoSource(key,i);
       var ready = source && source.url;
+      var missing = isPhotoDescriptor(p) && !!missingPhotoIds[p.id];
       return '<div class="photoitem" data-photo-key="'+esc(key)+'" data-photo-index="'+i+'">' +
-        '<button type="button" class="ph'+(ready ? ' ready' : '')+'" data-viewph aria-label="'+viewLabel+'">' +
-          '<span class="phload" aria-hidden="true">Loading photo</span>' +
+        '<button type="button" class="ph'+(ready ? ' ready' : '')+(missing ? ' missing' : '')+'" data-viewph aria-label="'+viewLabel+'">' +
+          '<span class="phload" aria-hidden="true">'+(missing ? 'Photo missing' : 'Loading photo')+'</span>' +
           '<img'+(ready ? ' src="'+esc(source.url)+'"' : '')+' alt="" data-photo-token="'+esc(photoToken(key,i))+'"' +
+          ' data-photo-asset="'+esc(source ? source.assetKey : '')+'"' +
           ' data-photo-key="'+esc(key)+'" data-photo-index="'+i+'"></button>' +
         '<button type="button" class="phdel" data-delph="'+i+'" data-delete-label="'+label+'" aria-label="'+label+'">&times;</button>' +
         '</div>';
@@ -2438,6 +2828,7 @@ document.addEventListener("click", function(e){
     var nowOpen = !sec.classList.contains("open");
     sec.classList.toggle("open", nowOpen);
     S.ui[kk] = nowOpen; save();
+    if(nowOpen) hydratePhotoThumbnails();
     return;
   }
 
@@ -2542,7 +2933,7 @@ document.addEventListener("click", function(e){
   if(t.id === "pkgshare"){ sharePreparedPackage(); return; }
   if(t.id === "pkgdownload"){ downloadPreparedPackage(); return; }
   if(t.id === "imp"){ document.getElementById("jsonin").click(); return; }
-  if(t.id === "raw"){ showRaw(JSON.stringify(envelope(),null,2), "Survey data (copy & paste to save)"); return; }
+  if(t.id === "raw"){ showPortableRaw(); return; }
   if(t.id === "restore"){
     armConfirm(t, "Tap again to restore", function(){ restoreBackup(); });
     return;
@@ -2686,21 +3077,167 @@ function slug(){
   return "avl-survey-" + c + (d ? "-" + d : "");
 }
 function exportJSON(){
-  var json = JSON.stringify(envelope(),null,2);
-  try {
-    var blob = new Blob([json], {type:"application/json"});
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = slug() + ".json";
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
-    toast("Exported. No file? Use “Show raw data”.");
-  } catch(e){
-    showRaw(json, "Download blocked — copy this instead");
+  return portableEnvelope().then(function(portable){
+    var json = JSON.stringify(portable,null,2);
+    try {
+      var blob = new Blob([json], {type:"application/json"});
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = slug() + ".json";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+      toast("Exported. No file? Use “Show raw data”.");
+    } catch(e){
+      showRaw(json, "Download blocked — copy this instead");
+    }
+    return portable;
+  }).catch(function(error){
+    if(error && error.code === "PHOTO_MISSING"){
+      toast("Export stopped — a photo is missing from device storage");
+    } else {
+      toast("Could not prepare the portable export");
+    }
+    return null;
+  });
+}
+function showPortableRaw(){
+  return portableEnvelope().then(function(portable){
+    showRaw(JSON.stringify(portable,null,2), "Survey data (copy & paste to save)");
+    return portable;
+  }).catch(function(error){
+    if(error && error.code === "PHOTO_MISSING"){
+      toast("Raw export stopped — a photo is missing from device storage");
+    } else {
+      toast("Could not prepare the portable export");
+    }
+    return null;
+  });
+}
+function portablePhotoValid(value){
+  if(!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if(typeof value.mime !== "string" || !value.mime) return false;
+  if(typeof value.data !== "string") return false;
+  var fields = ["bytes","width","height"];
+  for(var i=0;i<fields.length;i++){
+    var n = value[fields[i]];
+    if(typeof n !== "number" || !isFinite(n) || n < 0 || Math.floor(n) !== n) return false;
   }
+  try {
+    var decoded = decodeDataUrl(value.data);
+    return decoded.mime === value.mime.toLowerCase() && decoded.bytes.length === value.bytes;
+  } catch(error){
+    return false;
+  }
+}
+function portableImportState(payload, useDescriptors){
+  if(!payload || payload.app !== "avl-survey" || payload.schema !== 3 ||
+     payload.photoFormat !== "inline" || !payload.data || typeof payload.data !== "object"){
+    return Promise.reject(new Error("This file lists photos that are stored on the device it came from. Export again from that device."));
+  }
+  var sourcePhotos = payload.data.photos || {};
+  if(!sourcePhotos || typeof sourcePhotos !== "object" || Array.isArray(sourcePhotos)){
+    return Promise.reject(new Error("Portable photo data is malformed"));
+  }
+  var data = JSON.parse(JSON.stringify({
+    visit:payload.data.visit,
+    log:payload.data.log,
+    rooms:payload.data.rooms,
+    photos:{},
+    skipped:payload.data.skipped,
+    ui:payload.data.ui,
+    meta:payload.data.meta
+  }));
+  var jobs = [];
+  var keys = Object.keys(sourcePhotos);
+  for(var k=0;k<keys.length;k++){
+    var list = sourcePhotos[keys[k]];
+    if(!Array.isArray(list)) return Promise.reject(new Error("Portable photo data is malformed"));
+    data.photos[keys[k]] = [];
+    for(var i=0;i<list.length;i++){
+      if(!portablePhotoValid(list[i])){
+        return Promise.reject(new Error("Portable photo data is malformed"));
+      }
+      jobs.push({key:keys[k], value:list[i]});
+    }
+  }
+  var baseValidation = validate(data);
+  if(!baseValidation.ok) return Promise.reject(new Error(baseValidation.reason));
+  if(!useDescriptors){
+    jobs.forEach(function(job){ data.photos[job.key].push(job.value.data); });
+    return Promise.resolve(coerce(data));
+  }
+
+  var records = [];
+  var chain = Promise.resolve();
+  jobs.forEach(function(job){
+    chain = chain.then(function(){
+      if(!window.AVLPhotoStore || typeof window.AVLPhotoStore.addDataUrl !== "function"){
+        throw new Error("Photo storage is unavailable");
+      }
+      return window.AVLPhotoStore.addDataUrl(
+        job.value.data,
+        job.value.width,
+        job.value.height
+      ).then(function(record){
+        if(!record || !record.id || !record.blob ||
+           record.bytes !== job.value.bytes ||
+           String(record.mime).toLowerCase() !== job.value.mime.toLowerCase()){
+          throw new Error("Photo storage verification failed");
+        }
+        records.push({job:job,record:record});
+      });
+    });
+  });
+  return chain.then(function(){
+    var seen = {};
+    records.forEach(function(item){
+      if(seen[item.record.id]) throw new Error("Photo storage returned a duplicate id");
+      seen[item.record.id] = true;
+      data.photos[item.job.key].push({
+        id:item.record.id,
+        mime:String(item.record.mime).toLowerCase(),
+        bytes:item.record.bytes,
+        width:item.record.width,
+        height:item.record.height
+      });
+    });
+    var result = validate(data);
+    if(!result.ok) throw new Error(result.reason);
+    return coerce(data);
+  }).catch(function(){
+    Object.keys(data.photos).forEach(function(key){ data.photos[key] = []; });
+    jobs.forEach(function(job){ data.photos[job.key].push(job.value.data); });
+    return coerce(data);
+  });
+}
+function applyPreparedImport(incoming, from){
+  var rooms = incoming.rooms.length;
+  var hadWork = hasSurveyWork();
+  if(hadWork && !snapshot()){
+    toast("Could not back up current survey — import cancelled");
+    return false;
+  }
+  revokeAllPhotoAssets();
+  S = incoming;
+  reseq();
+  save();
+  render();
+  refreshPhotoIntegrity();
+  toast("Imported " + rooms + (rooms === 1 ? " room" : " rooms") +
+    (from < SCHEMA ? " (upgraded from v" + from + ")" : "") +
+    (hadWork ? " — previous survey backed up" : ""));
+  return true;
+}
+function applyPortableImport(payload, useDescriptors){
+  return portableImportState(payload,!!useDescriptors).then(function(incoming){
+    return applyPreparedImport(incoming,3);
+  }).catch(function(error){
+    toast("Not imported: " + (error && error.message ? error.message : "portable import failed"));
+    return false;
+  });
 }
 
 /* Import is the most dangerous operation in the app: it overwrites everything.
@@ -2710,32 +3247,36 @@ function applyImport(text){
   try { parsed = JSON.parse(text); }
   catch(e){ toast("That file isn't valid JSON"); return false; }
 
+  if(parsed && parsed.app === "avl-survey" && parsed.schema === 3){
+    if(parsed.photoFormat !== "inline"){
+      toast("Not imported: This file lists photos that are stored on the device it came from. Export again from that device.");
+      return false;
+    }
+    /* B2a remains data-inert: portable v3 files are accepted, but their
+       photos remain inline until B2b deliberately enables descriptor writes. */
+    return applyPortableImport(parsed,false);
+  }
+
   var res = migrate(parsed);
   if(!res.ok){ toast("Not imported: " + res.reason); return false; }
-
-  var incoming = res.data;
-  var rooms = incoming.rooms.length;
-  var hadWork = hasSurveyWork();
-  if(hadWork && !snapshot()){
-    toast("Could not back up current survey — import cancelled");
+  if(SCHEMA === 2 && stateHasPhotoDescriptors(res.data)){
+    toast("Not imported: This file lists photos that are stored on the device it came from. Export again from that device.");
     return false;
   }
 
-  S = incoming;
-  reseq();
-  save();
-  render();
-  toast("Imported " + rooms + (rooms === 1 ? " room" : " rooms") +
-    (res.from < SCHEMA ? " (upgraded from v" + res.from + ")" : "") +
-    (hadWork ? " — previous survey backed up" : ""));
-  return true;
+  return applyPreparedImport(res.data,res.from);
 }
 
 function restoreBackup(){
   var raw = store.get(BACKUP_KEY);
   if(!raw){ toast("No backup available"); return false; }
   var current = JSON.stringify(envelope());
-  if(!applyImport(raw)) return false;
+  var parsed;
+  try { parsed = JSON.parse(raw); }
+  catch(error){ toast("Backup is unreadable"); return false; }
+  var restored = migrate(parsed);
+  if(!restored.ok){ toast("Backup not restored: " + restored.reason); return false; }
+  if(!applyPreparedImport(restored.data,restored.from)) return false;
   store.set(BACKUP_KEY, current);
   render();
   return true;
@@ -2785,7 +3326,7 @@ function printPhotos(key){
   }).join("") + '</div>';
 }
 
-function buildPrint(){
+function buildPrintNow(){
   var h = "";
   h += '<h1>AVL Pre-Install Site Survey</h1>';
   h += '<div class="meta">' + esc(S.visit.client || "—") + ' &middot; ' + esc(S.visit.site || "—") +
@@ -2832,6 +3373,28 @@ function buildPrint(){
     catch(e){ toast("Printing blocked here — open the file in your browser"); }
   }, 120);
 }
+function buildPrint(){
+  var manifest;
+  try { manifest = photoManifest(); }
+  catch(error){ toast("PDF could not be prepared"); return Promise.resolve(false); }
+  var chain = Promise.resolve();
+  manifest.forEach(function(entry){
+    chain = chain.then(function(){
+      return hydratePhotoSource(entry.key,entry.bucketIndex);
+    });
+  });
+  return chain.then(function(){
+    buildPrintNow();
+    return true;
+  }).catch(function(error){
+    if(error && error.code === "PHOTO_MISSING"){
+      toast("PDF cannot be prepared because a photo is missing from device storage");
+    } else {
+      toast("PDF could not be prepared");
+    }
+    return false;
+  });
+}
 
 /* ============================================================
    BOOT
@@ -2840,6 +3403,7 @@ load();
 if(S.ui["visit|main"] === undefined) S.ui["visit|main"] = true;
 render();
 refreshStorageEstimate();
+refreshPhotoIntegrity();
 resolveStoragePersistence();
 window.addEventListener("pagehide", function(){
   revokeAllPhotoAssets();
@@ -2998,23 +3562,40 @@ window.__avl = {
   validate:validate,
   normalize:normalize,
   envelope:envelope,
+  stateEnvelope:stateEnvelope,
+  portableEnvelope:portableEnvelope,
+  exportJSON:exportJSON,
+  showPortableRaw:showPortableRaw,
   applyImport:applyImport,
+  applyPortableDescriptorImportForTest:function(text){
+    var parsed;
+    try { parsed = JSON.parse(text); }
+    catch(error){ return Promise.resolve(false); }
+    return applyPortableImport(parsed,true);
+  },
   restoreBackup:restoreBackup,
+  snapshot:snapshot,
   hasBackup:hasBackup,
   hasSurveyWork:hasSurveyWork,
   storageHTML:storageHTML,
   localBytes:localBytes,
   photoCount:photoCount,
   photoManifest:photoManifest,
+  isPhotoDescriptor:isPhotoDescriptor,
+  photoStorageCounts:photoStorageCounts,
+  refreshPhotoIntegrity:refreshPhotoIntegrity,
   photoSource:photoSource,
   hydratePhotoSource:hydratePhotoSource,
+  fillPhotoThumbnail:fillPhotoThumbnail,
   hydratePhotoThumbnails:hydratePhotoThumbnails,
   reconcilePhotoAssets:reconcilePhotoAssets,
   photoAssetStatus:function(){
-    return Object.keys(photoAssets).map(function(token){
-      var asset = photoAssets[token];
+    return Object.keys(photoAssets).map(function(assetKey){
+      var asset = photoAssets[assetKey];
       return {
-        token:token,
+        token:asset.token,
+        assetKey:assetKey,
+        identity:asset.identity,
         source:asset.source,
         url:asset.url,
         revoked:asset.revoked
@@ -3050,7 +3631,16 @@ window.__avl = {
   backupRaw:function(){ return store.get(BACKUP_KEY); },
   salvageRaw:function(){ return store.get(SALVAGE_KEY); },
   setRaw:function(value){ return store.set(KEY,value); },
-  reload:function(){ S = blankState(); load(); render(); },
+  reload:function(){ S = blankState(); load(); render(); refreshPhotoIntegrity(); },
+  setDescriptorStateForTest:function(data){
+    var result = validate(data);
+    if(!result.ok) return Promise.reject(new Error(result.reason));
+    revokeAllPhotoAssets();
+    S = coerce(data);
+    reseq();
+    render();
+    return refreshPhotoIntegrity();
+  },
   swReady:false
 };
 </script>

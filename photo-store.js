@@ -178,6 +178,33 @@
     });
   }
 
+  function keys(){
+    return open().then(function(db){
+      return new Promise(function(resolve, reject){
+        var values = [];
+        var request;
+        try {
+          request = db.transaction(STORE_NAME, "readonly")
+            .objectStore(STORE_NAME)
+            .openKeyCursor();
+        } catch(error){
+          reject(error);
+          return;
+        }
+        request.onsuccess = function(){
+          var cursor = request.result;
+          if(!cursor){
+            resolve(values);
+            return;
+          }
+          values.push(cursor.primaryKey);
+          cursor.continue();
+        };
+        request.onerror = function(){ reject(request.error || new Error("Could not list photo keys")); };
+      });
+    });
+  }
+
   function clear(){
     return transaction("readwrite", function(store){
       store.clear();
@@ -194,6 +221,7 @@
     addRecord:addRecord,
     addDataUrl:addDataUrl,
     get:get,
+    keys:keys,
     all:all,
     clear:clear
   };

@@ -108,11 +108,13 @@ test("the photo store rejects duplicate IDs instead of overwriting a record", as
       }
 
       var records = await window.AVLPhotoStore.all();
+      var keys = await window.AVLPhotoStore.keys();
       return {
         rejection:rejection,
         count:records.length,
         id:records[0] && records[0].id,
-        bytes:records[0] && Array.from(new Uint8Array(await records[0].blob.arrayBuffer()))
+        bytes:records[0] && Array.from(new Uint8Array(await records[0].blob.arrayBuffer())),
+        keys:keys
       };
     });
 
@@ -121,6 +123,7 @@ test("the photo store rejects duplicate IDs instead of overwriting a record", as
     assert.equal(result.count, 1);
     assert.equal(typeof result.id, "string");
     assert.deepEqual(result.bytes, [0,1,2,3,4]);
+    assert.deepEqual(result.keys,[result.id]);
   });
 });
 
