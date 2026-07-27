@@ -118,10 +118,15 @@ button.btn:active{transform:translateY(1px)}
 .photos{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .photoitem{position:relative;width:76px;height:76px;flex:0 0 76px}
 .ph{
-  display:block;width:76px;height:76px;padding:0;border-radius:9px;overflow:hidden;
+  display:block;position:relative;width:76px;height:76px;padding:0;border-radius:9px;overflow:hidden;
   border:1px solid var(--line);background:var(--card);cursor:zoom-in;color:inherit
 }
 .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.phload{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  padding:7px;color:var(--muted);font-size:10px;line-height:1.2;text-align:center
+}
+.ph.ready .phload{display:none}
 .ph:focus{outline:2px solid var(--accent);outline-offset:2px}
 .phdel{
   position:absolute;top:2px;right:2px;z-index:2;width:22px;height:22px;border-radius:99px;border:0;
@@ -309,7 +314,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.7.1";
+var APP_VERSION = "1.8.0";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -663,8 +668,8 @@ function localBytes(){
 }
 function photoCount(){
   var n = 0;
-  Object.keys(S.photos || {}).forEach(function(k){
-    n += (S.photos[k] || []).length;
+  Object.keys(photoBuckets()).forEach(function(k){
+    n += photoList(k).length;
   });
   return n;
 }
@@ -946,7 +951,7 @@ function photoSectionSlug(value){
     .replace(/^-+|-+$/g,"") || "unknown";
 }
 function photoManifest(){
-  var photos = S.photos || {};
+  var photos = photoBuckets();
   var keys = Object.keys(photos);
   var consumed = {};
   var filenames = {};
@@ -1075,6 +1080,158 @@ function dataUrlToFile(dataUrl, key, index){
     photoFileName(key,index,decoded.mime),
     {type:decoded.mime,lastModified:Date.now()}
   );
+}
+
+/* ============================================================
+   PHOTO READ SEAM
+   Persisted photos remain data URLs in schema 2. Runtime consumers use this
+   accessor so schema 3 can replace the backing read without another UI rewrite.
+   ============================================================ */
+var photoAssets = {};
+var retiredPhotoAssets = [];
+
+function photoBuckets(){
+  return S.photos || {};
+}
+function photoList(key){
+  var list = photoBuckets()[key];
+  return Array.isArray(list) ? list : [];
+}
+function photoValue(key, index){
+  return photoList(key)[index];
+}
+function photoToken(key, index){
+  return String(key) + "|" + String(index);
+}
+function photoSource(key, index){
+  index = parseInt(index,10);
+  var source = photoValue(key,index);
+  if(typeof source !== "string") return null;
+  var token = photoToken(key,index);
+  var asset = photoAssets[token];
+  if(asset && asset.source === source){
+    return {
+      kind:"inline",
+      mime:asset.mime,
+      blob:asset.blob,
+      url:asset.url,
+      source:source,
+      token:token,
+      asset:asset
+    };
+  }
+  return {
+    kind:"inline",
+    mime:photoMime(source),
+    blob:null,
+    url:"",
+    source:source,
+    token:token,
+    asset:null
+  };
+}
+function revokePhotoAsset(asset, force){
+  if(!asset || asset.revoked) return;
+  if(!force && photoViewer && photoViewer.asset === asset){
+    asset.retired = true;
+    if(retiredPhotoAssets.indexOf(asset) < 0) retiredPhotoAssets.push(asset);
+    return;
+  }
+  if(asset.url){
+    try { URL.revokeObjectURL(asset.url); } catch(error){}
+  }
+  asset.revoked = true;
+  asset.url = "";
+}
+function flushRetiredPhotoAssets(){
+  retiredPhotoAssets.forEach(function(asset){
+    if(!photoViewer || photoViewer.asset !== asset) revokePhotoAsset(asset,true);
+  });
+  retiredPhotoAssets = retiredPhotoAssets.filter(function(asset){ return !asset.revoked; });
+}
+function materializePhotoSource(key, index){
+  var source = photoSource(key,index);
+  if(!source) throw new Error("Photo is unavailable");
+  if(source.asset && !source.asset.revoked) return source;
+
+  var old = photoAssets[source.token];
+  if(old && old.source !== source.source){
+    delete photoAssets[source.token];
+    revokePhotoAsset(old,false);
+  }
+  var decoded = decodeDataUrl(source.source);
+  var blob = new Blob([decoded.bytes], {type:decoded.mime});
+  var asset = {
+    key:String(key),
+    index:parseInt(index,10),
+    token:source.token,
+    source:source.source,
+    mime:decoded.mime,
+    blob:blob,
+    url:URL.createObjectURL(blob),
+    revoked:false,
+    retired:false
+  };
+  photoAssets[source.token] = asset;
+  return {
+    kind:"inline",
+    mime:asset.mime,
+    blob:asset.blob,
+    url:asset.url,
+    source:asset.source,
+    token:asset.token,
+    asset:asset
+  };
+}
+function hydratePhotoSource(key, index){
+  return new Promise(function(resolve,reject){
+    setTimeout(function(){
+      try { resolve(materializePhotoSource(key,index)); }
+      catch(error){ reject(error); }
+    },0);
+  });
+}
+function reconcilePhotoAssets(){
+  Object.keys(photoAssets).forEach(function(token){
+    var asset = photoAssets[token];
+    if(photoValue(asset.key,asset.index) !== asset.source){
+      delete photoAssets[token];
+      revokePhotoAsset(asset,false);
+    }
+  });
+}
+function fillPhotoThumbnail(img, source){
+  if(!img || !img.isConnected || !source || !source.url) return;
+  if(img.getAttribute("data-photo-token") !== source.token) return;
+  if(photoValue(img.getAttribute("data-photo-key"),img.getAttribute("data-photo-index")) !== source.source) return;
+  img.src = source.url;
+  var button = img.closest("[data-viewph]");
+  if(button) button.classList.add("ready");
+}
+function hydratePhotoThumbnails(){
+  reconcilePhotoAssets();
+  Array.prototype.forEach.call(document.querySelectorAll("img[data-photo-token]"), function(img){
+    var key = img.getAttribute("data-photo-key");
+    var index = parseInt(img.getAttribute("data-photo-index"),10);
+    var source = photoSource(key,index);
+    if(source && source.url){
+      fillPhotoThumbnail(img,source);
+      return;
+    }
+    hydratePhotoSource(key,index).then(function(loaded){
+      fillPhotoThumbnail(img,loaded);
+    }).catch(function(){
+      if(img.isConnected) img.setAttribute("data-photo-error","1");
+    });
+  });
+}
+function revokeAllPhotoAssets(){
+  Object.keys(photoAssets).forEach(function(token){
+    revokePhotoAsset(photoAssets[token],true);
+    delete photoAssets[token];
+  });
+  retiredPhotoAssets.forEach(function(asset){ revokePhotoAsset(asset,true); });
+  retiredPhotoAssets = [];
 }
 
 /* ============================================================
@@ -1220,18 +1377,18 @@ function packageHead(){
   };
 }
 function packageSource(entry){
-  var list = S.photos[entry.key] || [];
-  return list[entry.bucketIndex];
+  return photoValue(entry.key,entry.bucketIndex);
 }
 function readPhotoSource(entry){
-  return new Promise(function(resolve,reject){
-    try {
-      var identity = packageSource(entry);
-      var decoded = decodeDataUrl(identity);
-      resolve({mime:decoded.mime,bytes:decoded.bytes,identity:identity});
-    } catch(error){
-      reject(error);
-    }
+  var identity = packageSource(entry);
+  return hydratePhotoSource(entry.key,entry.bucketIndex).then(function(source){
+    return source.blob.arrayBuffer().then(function(buffer){
+      return {
+        mime:source.mime,
+        bytes:new Uint8Array(buffer),
+        identity:identity
+      };
+    });
   });
 }
 
@@ -1555,8 +1712,12 @@ function refreshPhotoShareUI(){
   if(!photoViewer || !photoViewer.save) return;
   var busy = !!photoShareFlight;
   var id = photoIdentity(photoViewer.key, photoViewer.index);
-  photoViewer.save.disabled = busy;
-  photoViewer.save.textContent = busy ? "Opening share sheet\u2026" : "Save photo\u2026";
+  var resident = !!(photoViewer.file && photoViewer.asset &&
+    photoViewer.asset.source === photoValue(photoViewer.key,photoViewer.index));
+  photoViewer.save.disabled = busy || !resident;
+  photoViewer.save.textContent = busy
+    ? "Opening share sheet\u2026"
+    : (resident ? "Save photo\u2026" : "Preparing photo\u2026");
   photoViewer.download.hidden = photoViewer.fallbackId !== id;
   photoViewer.help.textContent = photoViewer.notice || defaultPhotoShareHelp();
   photoViewer.status.textContent = photoViewer.message || "";
@@ -1579,19 +1740,23 @@ function finishPhotoShare(flight, outcome, error){
 }
 function sharePhoto(key, index){
   if(photoShareFlight) return false;
-  var list = S.photos[key] || [];
+  var list = photoList(key);
   index = parseInt(index,10);
   if(isNaN(index) || index < 0 || index >= list.length) return false;
 
-  var file;
-  try {
-    /* Keep File construction synchronous and in this click task. Awaiting a
-       data-URL fetch here can lose iOS Safari's transient user activation. */
-    file = dataUrlToFile(list[index], key, index);
-  } catch(error){
+  /* The exact File is prepared while the viewer hydrates. The trusted tap does
+     no decode, storage read or promise work above navigator.share(). */
+  var file = photoViewer &&
+    photoViewer.key === String(key) &&
+    photoViewer.index === index &&
+    photoViewer.asset &&
+    photoViewer.asset.source === photoValue(key,index)
+      ? photoViewer.file
+      : null;
+  if(!file){
     if(photoViewer){
       photoViewer.fallbackId = photoIdentity(key,index);
-      photoViewer.message = "This image could not be prepared for sharing.";
+      photoViewer.message = "This image is still preparing. Try again.";
       refreshPhotoShareUI();
     }
     return false;
@@ -1614,7 +1779,6 @@ function sharePhoto(key, index){
     }
     return false;
   }
-
   var flight = {
     id:photoIdentity(key,index),
     key:String(key),
@@ -1646,11 +1810,22 @@ function sharePhoto(key, index){
   return true;
 }
 function downloadPhoto(key, index){
-  var list = S.photos[key] || [];
+  var list = photoList(key);
   index = parseInt(index,10);
   if(isNaN(index) || index < 0 || index >= list.length) return false;
   try {
-    var file = dataUrlToFile(list[index], key, index);
+    var source = photoViewer &&
+      photoViewer.key === String(key) &&
+      photoViewer.index === index &&
+      photoViewer.asset &&
+      photoViewer.asset.source === photoValue(key,index)
+        ? photoViewer.asset
+        : materializePhotoSource(key,index).asset;
+    var file = new File(
+      [source.blob],
+      photoFileName(key,index,source.mime),
+      {type:source.mime,lastModified:Date.now()}
+    );
     var url = URL.createObjectURL(file);
     var a = document.createElement("a");
     a.href = url;
@@ -1675,7 +1850,7 @@ function downloadPhoto(key, index){
 }
 function movePhotoViewer(delta){
   if(!photoViewer) return;
-  var list = S.photos[photoViewer.key] || [];
+  var list = photoList(photoViewer.key);
   var next = photoViewer.index + delta;
   if(next < 0 || next >= list.length) return;
   photoViewer.index = next;
@@ -1686,17 +1861,42 @@ function movePhotoViewer(delta){
 }
 function updatePhotoViewer(){
   if(!photoViewer) return;
-  var list = S.photos[photoViewer.key] || [];
+  var list = photoList(photoViewer.key);
   if(!list.length){ closePhotoViewer(); return; }
   photoViewer.index = Math.max(0, Math.min(photoViewer.index, list.length - 1));
   var number = photoViewer.index + 1;
-  photoViewer.image.src = list[photoViewer.index];
+  var load = ++photoViewer.load;
+  photoViewer.asset = null;
+  photoViewer.file = null;
+  flushRetiredPhotoAssets();
+  photoViewer.image.removeAttribute("src");
   photoViewer.image.alt = "Photo " + number + " of " + list.length + " \u2014 " + photoContext(photoViewer.key);
   photoViewer.title.textContent = photoContext(photoViewer.key);
   photoViewer.count.textContent = "Photo " + number + " of " + list.length;
   photoViewer.prev.disabled = photoViewer.index === 0;
   photoViewer.next.disabled = photoViewer.index === list.length - 1;
   refreshPhotoShareUI();
+  var key = photoViewer.key;
+  var index = photoViewer.index;
+  hydratePhotoSource(key,index).then(function(source){
+    if(!photoViewer || photoViewer.load !== load ||
+       photoViewer.key !== key || photoViewer.index !== index ||
+       source.source !== photoValue(key,index)){
+      return;
+    }
+    photoViewer.asset = source.asset;
+    photoViewer.file = new File(
+      [source.blob],
+      photoFileName(key,index,source.mime),
+      {type:source.mime,lastModified:Date.now()}
+    );
+    photoViewer.image.src = source.url;
+    refreshPhotoShareUI();
+  }).catch(function(){
+    if(!photoViewer || photoViewer.load !== load) return;
+    photoViewer.message = "This image could not be prepared.";
+    refreshPhotoShareUI();
+  });
 }
 function closePhotoViewer(){
   if(!photoViewer) return;
@@ -1707,6 +1907,9 @@ function closePhotoViewer(){
   restorePhotoViewerScroll(closing.scroll);
   var trigger = photoTrigger(closing.key, closing.returnIndex);
   if(trigger) trigger.focus();
+  if(closing.asset && closing.asset.retired) revokePhotoAsset(closing.asset,true);
+  flushRetiredPhotoAssets();
+  reconcilePhotoAssets();
 }
 function photoViewerKeydown(e){
   if(!photoViewer) return;
@@ -1737,7 +1940,7 @@ function photoViewerKeydown(e){
   }
 }
 function openPhotoViewer(key, index, notice){
-  var list = S.photos[key] || [];
+  var list = photoList(key);
   index = parseInt(index,10);
   if(isNaN(index) || index < 0 || index >= list.length) return false;
   if(photoViewer) closePhotoViewer();
@@ -1769,7 +1972,7 @@ function openPhotoViewer(key, index, notice){
   var lock = lockPhotoViewerScroll();
   photoViewer = {
     key:String(key), index:index, returnIndex:index, overlay:overlay, scroll:lock,
-    fallbackId:null, message:"", notice:notice || "",
+    fallbackId:null, message:"", notice:notice || "", load:0, asset:null, file:null,
     image:overlay.querySelector(".phvimage"),
     title:overlay.querySelector(".phvtitle"),
     count:overlay.querySelector(".phvtop .phvcount"),
@@ -1930,13 +2133,18 @@ function fieldsHTML(scope, fields){
 
 /* ---------- photo strip ---------- */
 function photosHTML(key){
-  var list = S.photos[key] || [];
+  var list = photoList(key);
   return '<div class="f"><span class="flab">Photos</span><div class="photos" data-photos="'+esc(key)+'">' +
     list.map(function(p,i){
       var label = "Delete photo " + (i + 1) + " of " + list.length;
       var viewLabel = "View photo " + (i + 1) + " of " + list.length;
+      var source = photoSource(key,i);
+      var ready = source && source.url;
       return '<div class="photoitem" data-photo-key="'+esc(key)+'" data-photo-index="'+i+'">' +
-        '<button type="button" class="ph" data-viewph aria-label="'+viewLabel+'"><img src="'+p+'" alt=""></button>' +
+        '<button type="button" class="ph'+(ready ? ' ready' : '')+'" data-viewph aria-label="'+viewLabel+'">' +
+          '<span class="phload" aria-hidden="true">Loading photo</span>' +
+          '<img'+(ready ? ' src="'+esc(source.url)+'"' : '')+' alt="" data-photo-token="'+esc(photoToken(key,i))+'"' +
+          ' data-photo-key="'+esc(key)+'" data-photo-index="'+i+'"></button>' +
         '<button type="button" class="phdel" data-delph="'+i+'" data-delete-label="'+label+'" aria-label="'+label+'">&times;</button>' +
         '</div>';
     }).join("") +
@@ -2180,6 +2388,7 @@ function render(){
 
   document.getElementById("app").innerHTML = h;
   updateProgress();
+  hydratePhotoThumbnails();
 }
 
 /* ============================================================
@@ -2287,7 +2496,7 @@ document.addEventListener("click", function(e){
     var strip = t.closest("[data-photos]");
     var pk = strip.getAttribute("data-photos");
     armPhotoDelete(t, function(){
-      var list = S.photos[pk] || [];
+      var list = photoList(pk);
       var index = parseInt(t.getAttribute("data-delph"),10);
       if(isNaN(index) || index < 0 || index >= list.length){
         render();
@@ -2312,7 +2521,7 @@ document.addEventListener("click", function(e){
     var rid = t.getAttribute("data-delroom");
     armConfirm(t, "Tap again to delete", function(){
       S.rooms = S.rooms.filter(function(r){ return String(r.id) !== rid; });
-      Object.keys(S.photos).forEach(function(pk){ if(pk.indexOf(rid + "|") === 0) delete S.photos[pk]; });
+      Object.keys(photoBuckets()).forEach(function(pk){ if(pk.indexOf(rid + "|") === 0) delete S.photos[pk]; });
       save(); render();
     });
     return;
@@ -2420,8 +2629,9 @@ document.getElementById("filein").addEventListener("change", function(e){
     compress(file, function(dataUrl, dimensions){
       if(dataUrl){
         if(!S.photos[key]) S.photos[key] = [];
-        if(firstAdded < 0) firstAdded = S.photos[key].length;
-        S.photos[key].push(dataUrl);
+        var list = photoList(key);
+        if(firstAdded < 0) firstAdded = list.length;
+        list.push(dataUrl);
         mirrorPhotoToIndexedDB(dataUrl, dimensions);
         added++;
       }
@@ -2565,9 +2775,14 @@ function tableFor(scope, fields){
   return rows ? '<table>' + rows + '</table>' : '';
 }
 function printPhotos(key){
-  var l = S.photos[key] || [];
+  var l = photoList(key);
   if(!l.length) return "";
-  return '<div class="pg">' + l.map(function(p){ return '<img src="' + p + '">'; }).join("") + '</div>';
+  return '<div class="pg">' + l.map(function(p,index){
+    var source;
+    try { source = materializePhotoSource(key,index); }
+    catch(error){ return ""; }
+    return '<img src="' + esc(source.url) + '">';
+  }).join("") + '</div>';
 }
 
 function buildPrint(){
@@ -2626,6 +2841,9 @@ if(S.ui["visit|main"] === undefined) S.ui["visit|main"] = true;
 render();
 refreshStorageEstimate();
 resolveStoragePersistence();
+window.addEventListener("pagehide", function(){
+  revokeAllPhotoAssets();
+});
 document.addEventListener("visibilitychange", function(){
   if(document.visibilityState === "visible" && storagePersistState === "denied"){
     recheckStoragePersistence();
@@ -2788,6 +3006,21 @@ window.__avl = {
   localBytes:localBytes,
   photoCount:photoCount,
   photoManifest:photoManifest,
+  photoSource:photoSource,
+  hydratePhotoSource:hydratePhotoSource,
+  hydratePhotoThumbnails:hydratePhotoThumbnails,
+  reconcilePhotoAssets:reconcilePhotoAssets,
+  photoAssetStatus:function(){
+    return Object.keys(photoAssets).map(function(token){
+      var asset = photoAssets[token];
+      return {
+        token:token,
+        source:asset.source,
+        url:asset.url,
+        revoked:asset.revoked
+      };
+    });
+  },
   zipStore:zipStore,
   photoManifestCSV:photoManifestCSV,
   readPhotoSource:readPhotoSource,

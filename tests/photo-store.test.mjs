@@ -141,6 +141,10 @@ test("new captures dual-write exact blobs with stable IDs while schema-v2 reads 
     await capture(page, "portrait.svg", 40, 60, "purple");
     await page.locator("[data-phv-close]").click();
     await capture(page, "landscape.svg", 70, 30, "teal");
+    await page.waitForFunction(function(){
+      var image = document.querySelector(".phvimage");
+      return image && /^blob:/.test(image.getAttribute("src") || "");
+    });
 
     var result = await page.evaluate(async function(){
       var records = await window.AVLPhotoStore.all();
@@ -172,6 +176,9 @@ test("new captures dual-write exact blobs with stable IDs while schema-v2 reads 
         return Promise.reject(new Error("PR A must not read IndexedDB"));
       };
       window.__avl.openPhotoViewer("1|notes", 0);
+      await window.__avl.hydratePhotoSource("1|notes",0);
+      await new Promise(function(resolve){ setTimeout(resolve,0); });
+      var viewerResponse = await fetch(document.querySelector(".phvimage").src);
 
       return {
         schema:window.__avl.SCHEMA,
@@ -179,6 +186,7 @@ test("new captures dual-write exact blobs with stable IDs while schema-v2 reads 
         durablePhotos:durable.data.photos["1|notes"],
         records:serial,
         viewerSource:document.querySelector(".phvimage").src,
+        viewerBytes:Array.from(new Uint8Array(await viewerResponse.arrayBuffer())),
         readCalls:readCalls,
         storeStatus:window.__avl.photoStoreStatus()
       };
@@ -206,7 +214,8 @@ test("new captures dual-write exact blobs with stable IDs while schema-v2 reads 
       var matchingIndex = record.width === 40 ? 0 : 1;
       assert.deepEqual(record.payload, dataUrlBytes(result.statePhotos[matchingIndex]));
     });
-    assert.equal(result.viewerSource, result.statePhotos[0]);
+    assert.match(result.viewerSource, /^blob:/);
+    assert.deepEqual(result.viewerBytes, dataUrlBytes(result.statePhotos[0]));
     assert.equal(result.readCalls, 0, "viewer and sharing paths must remain on localStorage in PR A");
     assert.deepEqual(result.storeStatus, {pending:0,lastError:""});
   });
@@ -232,14 +241,20 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
       };
     });
     await capture(page, "fallback.svg", 32, 48, "orange");
+    await page.waitForFunction(function(){
+      var image = document.querySelector(".phvimage");
+      return image && /^blob:/.test(image.getAttribute("src") || "");
+    });
 
-    var result = await page.evaluate(function(){
+    var result = await page.evaluate(async function(){
       var durable = JSON.parse(window.__avl.raw());
+      var viewerResponse = await fetch(document.querySelector(".phvimage").src);
       return {
         memory:window.__avl.S().photos["1|notes"].slice(),
         durable:durable.data.photos["1|notes"].slice(),
         schema:durable.schema,
         viewerSource:document.querySelector(".phvimage").src,
+        viewerBytes:Array.from(new Uint8Array(await viewerResponse.arrayBuffer())),
         status:window.__avl.photoStoreStatus(),
         toast:document.getElementById("toast").textContent
       };
@@ -248,7 +263,8 @@ test("an IndexedDB failure cannot prevent the schema-v2 survey copy from saving"
     assert.equal(result.schema, 2);
     assert.equal(result.memory.length, 1);
     assert.deepEqual(result.durable, result.memory);
-    assert.equal(result.viewerSource, result.memory[0]);
+    assert.match(result.viewerSource, /^blob:/);
+    assert.deepEqual(result.viewerBytes, dataUrlBytes(result.memory[0]));
     assert.match(result.status.lastError, /Injected IndexedDB failure/);
     assert.equal(result.status.pending, 0);
     assert.match(result.toast, /Additional photo storage unavailable/i);
