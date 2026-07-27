@@ -141,6 +141,9 @@ button.btn:active{transform:translateY(1px)}
   align-items:center;justify-content:center;gap:3px
 }
 .addph span:first-child{font-size:19px}
+.phrecovery{margin:8px 0 0}
+.phrecovery-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.phrecovery-actions button{background:var(--card)}
 
 /* full-screen stored-photo viewer */
 .phviewer{
@@ -315,7 +318,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.9.0";
+var APP_VERSION = "1.9.1";
 var SCHEMA = 2;
 
 /* ============================================================
@@ -739,9 +742,16 @@ function portableEnvelope(){
 }
 
 var saveTimer = null;
+var photoCaptureRecoveries = [];
 function persistSurvey(){
   if(S.meta) S.meta.updated = nowISO();
   var ok = store.set(KEY, JSON.stringify(stateEnvelope()));
+  if(ok && photoCaptureRecoveries.length){
+    photoCaptureRecoveries = [];
+    Array.prototype.forEach.call(document.querySelectorAll("[data-photo-recovery]"), function(notice){
+      if(notice.parentNode) notice.parentNode.removeChild(notice);
+    });
+  }
   updateStorageBar();
   return ok;
 }
@@ -833,6 +843,11 @@ function storageHTML(){
   if(deviceInfo.known){
     h += '<div class="hint" style="margin-top:6px">Device storage used by this app (estimate): ' +
       fmtMB(deviceInfo.used) + '</div>';
+  }
+  if(photoStoreLastError){
+    h += '<div class="flag" data-photo-store-warning style="margin-top:8px">' +
+      'Additional device photo storage is unavailable. This version will keep photos in the survey file. ' +
+      'Export this survey after the visit.</div>';
   }
   var photoStorage = photoStorageCounts();
   if(photoStorage.descriptors){
@@ -2522,7 +2537,8 @@ function fieldsHTML(scope, fields){
 /* ---------- photo strip ---------- */
 function photosHTML(key){
   var list = photoList(key);
-  return '<div class="f"><span class="flab">Photos</span><div class="photos" data-photos="'+esc(key)+'">' +
+  return '<div class="f"><span class="flab">Photos</span>' + photoCaptureRecoveryHTML(key) +
+    '<div class="photos" data-photos="'+esc(key)+'">' +
     list.map(function(p,i){
       var label = "Delete photo " + (i + 1) + " of " + list.length;
       var viewLabel = "View photo " + (i + 1) + " of " + list.length;
@@ -2881,6 +2897,15 @@ document.addEventListener("click", function(e){
     return;
   }
 
+  if(t.hasAttribute && t.hasAttribute("data-recoverph")){
+    openPhotoViewer(
+      t.getAttribute("data-photo-key"),
+      t.getAttribute("data-photo-index"),
+      "This photo is available now but could not be added to the survey. Save it before leaving this page."
+    );
+    return;
+  }
+
   if(t.hasAttribute && t.hasAttribute("data-addph")){ pickPhoto(t.getAttribute("data-addph")); return; }
 
   if(t.hasAttribute && t.hasAttribute("data-delph")){
@@ -2894,6 +2919,7 @@ document.addEventListener("click", function(e){
         return;
       }
       list.splice(index, 1);
+      adjustPhotoCaptureRecoveriesAfterDelete(pk,index);
       save(); render();
     });
     return;
@@ -2941,6 +2967,7 @@ document.addEventListener("click", function(e){
   if(t.id === "wipe"){
     armConfirm(t, "Tap again to clear everything", function(){
       snapshot();
+      photoCaptureRecoveries = [];
       S = blankState();
       seq = 1; save(); render();
       toast("Cleared — recoverable via Restore backup");
@@ -2955,7 +2982,53 @@ document.addEventListener("click", function(e){
 var photoTarget = null;
 var photoStoreWrites = [];
 var photoStoreLastError = "";
-var photoStoreWarned = false;
+var photoCaptureFlight = Promise.resolve();
+
+function activePhotoCaptureRecoveries(key){
+  var list = photoList(key);
+  return photoCaptureRecoveries.filter(function(item){
+    return item.key === String(key) &&
+      item.index >= 0 &&
+      item.index < list.length &&
+      list[item.index] === item.source;
+  });
+}
+
+function photoCaptureRecoveryHTML(key){
+  var items = activePhotoCaptureRecoveries(key);
+  if(!items.length) return "";
+  var count = items.length;
+  var message = count === 1
+    ? "1 photo is available now but could not be added to the survey. Save it before leaving this page."
+    : count + " photos are available now but could not be added to the survey. Save them before leaving this page.";
+  return '<div class="flag bad phrecovery" role="alert" data-photo-recovery="'+esc(key)+'">' +
+    '<div>'+esc(message)+'</div>' +
+    '<div class="phrecovery-actions">' +
+      items.map(function(item){
+        return '<button type="button" class="btn sm" data-recoverph data-photo-key="'+esc(key)+
+          '" data-photo-index="'+item.index+'">Save photo '+(item.index + 1)+'\u2026</button>';
+      }).join("") +
+    '</div></div>';
+}
+
+function rememberPhotoCaptureFailures(key, entries){
+  entries.forEach(function(item){
+    photoCaptureRecoveries.push({
+      key:String(key),
+      index:item.index,
+      source:item.source
+    });
+  });
+}
+
+function adjustPhotoCaptureRecoveriesAfterDelete(key, index){
+  photoCaptureRecoveries = photoCaptureRecoveries.filter(function(item){
+    if(item.key !== String(key)) return true;
+    if(item.index === index) return false;
+    if(item.index > index) item.index--;
+    return true;
+  });
+}
 
 function mirrorPhotoToIndexedDB(dataUrl, dimensions){
   var write;
@@ -2976,10 +3049,7 @@ function mirrorPhotoToIndexedDB(dataUrl, dimensions){
     return record;
   }).catch(function(error){
     photoStoreLastError = error && error.message ? error.message : "Photo storage failed";
-    if(!photoStoreWarned){
-      photoStoreWarned = true;
-      toast("Additional photo storage unavailable — export this survey after the visit");
-    }
+    updateStorageBar();
     return null;
   });
   photoStoreWrites.push(tracked);
@@ -3009,41 +3079,85 @@ function pickPhoto(key){
   inp.value = "";
   inp.click();
 }
+
+function photoCaptureSummary(total, added, failed, persisted){
+  if(!added || !persisted){
+    return total === 1 ? "Could not add that photo." : "Could not add those photos.";
+  }
+  if(failed){
+    return added + " of " + total + " photos added. " + failed + " could not be processed.";
+  }
+  return added === 1 ? "Photo added." : added + " photos added.";
+}
+
+function processPhotoBatch(key, files, compressor){
+  var batch = {
+    key:String(key),
+    files:Array.prototype.slice.call(files || []),
+    index:0,
+    added:[],
+    failed:0
+  };
+  var runCompressor = compressor || compress;
+  clearTimeout(saveTimer);
+
+  function next(){
+    if(batch.index >= batch.files.length){
+      var persisted = false;
+      if(batch.added.length){
+        persisted = persistSurvey();
+        if(!persisted) rememberPhotoCaptureFailures(batch.key,batch.added);
+        render();
+      }
+      toast(photoCaptureSummary(batch.files.length,batch.added.length,batch.failed,persisted));
+      return Promise.resolve({
+        total:batch.files.length,
+        added:batch.added.length,
+        failed:batch.failed,
+        persisted:persisted
+      });
+    }
+
+    var file = batch.files[batch.index++];
+    return new Promise(function(resolve){
+      try {
+        runCompressor(file, function(dataUrl, dimensions){
+          if(dataUrl){
+            if(!S.photos[batch.key]) S.photos[batch.key] = [];
+            var list = photoList(batch.key);
+            var item = {index:list.length,source:dataUrl};
+            list.push(dataUrl);
+            batch.added.push(item);
+            mirrorPhotoToIndexedDB(dataUrl, dimensions);
+          } else {
+            batch.failed++;
+          }
+          resolve();
+        });
+      } catch(error){
+        batch.failed++;
+        resolve();
+      }
+    }).then(next);
+  }
+
+  return next();
+}
+
+function queuePhotoBatch(key, files, compressor){
+  var work = function(){ return processPhotoBatch(key,files,compressor); };
+  photoCaptureFlight = photoCaptureFlight.then(work,work);
+  return photoCaptureFlight;
+}
+
+function photoCaptureIdle(){
+  return photoCaptureFlight.then(function(){});
+}
+
 document.getElementById("filein").addEventListener("change", function(e){
   var files = Array.prototype.slice.call(e.target.files || []);
   if(!files.length || !photoTarget) return;
-  var key = photoTarget;
-  var pending = files.length;
-  var firstAdded = -1;
-  var added = 0;
-  files.forEach(function(file){
-    compress(file, function(dataUrl, dimensions){
-      if(dataUrl){
-        if(!S.photos[key]) S.photos[key] = [];
-        var list = photoList(key);
-        if(firstAdded < 0) firstAdded = list.length;
-        list.push(dataUrl);
-        mirrorPhotoToIndexedDB(dataUrl, dimensions);
-        added++;
-      }
-      if(--pending === 0){
-        if(!added){
-          toast("Could not add that photo");
-          return;
-        }
-        clearTimeout(saveTimer);
-        var persisted = persistSurvey();
-        render();
-        openPhotoViewer(
-          key,
-          firstAdded,
-          persisted
-            ? "Photo added to the survey. The survey copy is limited to 900px and camera metadata is removed."
-            : "Photo is available now, but survey storage is full. Save a copy and export the survey before closing the app."
-        );
-      }
-    });
-  });
+  queuePhotoBatch(photoTarget,files);
 });
 
 function compress(file, cb){
@@ -3221,6 +3335,7 @@ function applyPreparedImport(incoming, from){
     return false;
   }
   revokeAllPhotoAssets();
+  photoCaptureRecoveries = [];
   S = incoming;
   reseq();
   save();
@@ -3626,16 +3741,29 @@ window.__avl = {
   downloadPhoto:downloadPhoto,
   photoStoreIdle:photoStoreIdle,
   photoStoreStatus:photoStoreStatus,
+  photoCaptureIdle:photoCaptureIdle,
+  processPhotoBatchForTest:function(key,files,compressor){
+    return queuePhotoBatch(key,files,compressor);
+  },
+  photoCaptureRecoveries:function(){
+    return photoCaptureRecoveries.map(function(item){
+      return {key:item.key,index:item.index};
+    });
+  },
   persistSurvey:persistSurvey,
   raw:function(){ return store.get(KEY); },
   backupRaw:function(){ return store.get(BACKUP_KEY); },
   salvageRaw:function(){ return store.get(SALVAGE_KEY); },
   setRaw:function(value){ return store.set(KEY,value); },
-  reload:function(){ S = blankState(); load(); render(); refreshPhotoIntegrity(); },
+  reload:function(){
+    photoCaptureRecoveries = [];
+    S = blankState(); load(); render(); refreshPhotoIntegrity();
+  },
   setDescriptorStateForTest:function(data){
     var result = validate(data);
     if(!result.ok) return Promise.reject(new Error(result.reason));
     revokeAllPhotoAssets();
+    photoCaptureRecoveries = [];
     S = coerce(data);
     reseq();
     render();

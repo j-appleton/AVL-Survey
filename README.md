@@ -69,16 +69,18 @@ it works with no signal — the service worker caches everything on first load.
   **Restore backup** appears whenever one is available.
 - Tap any photo thumbnail to inspect the full stored survey image without the
   thumbnail crop, then move through the other photos in that section.
-- After capture, the new survey copy opens immediately. Tap **Save photo…** to
-  open the device share sheet, then choose **Save Image** on iPhone or
-  **Photos / Gallery** on Android. The browser cannot verify which destination
-  you chose, so the app never claims that the image was saved.
+- After capture, the app stays in the survey and reports the batch once. Tap any
+  thumbnail when you want the full viewer, then tap **Save photo…** to open the
+  device share sheet and choose **Save Image** on iPhone or **Photos / Gallery**
+  on Android. The browser cannot verify which destination you chose, so the app
+  never claims that the image was saved.
 - The saved/shareable survey copy is the same compressed image held by the app:
   JPEG, maximum 900px on its longest edge, with camera metadata removed. If file
   sharing is unavailable or fails, **Download image** appears as a fallback.
-- A new capture is persisted before its viewer opens. If survey storage rejects
-  it, the viewer says so while the in-memory image is still available to share,
-  instead of hiding the failure behind a generic toast.
+- New captures are processed sequentially in selection order and persisted
+  before they are reported as added. If survey storage rejects a batch, a
+  persistent notice stays above that section's thumbnails with a manual Save
+  action for every in-memory image.
 - At the end of a visit, open **Data & storage** and choose
   **Prepare photo package**. The app builds one ZIP containing every stored
   survey photo under its handoff filename, a versioned survey JSON export, and
@@ -111,7 +113,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v13";  // bump this for every runtime change
+var CACHE = "avl-survey-v14";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -146,9 +148,10 @@ The browser suites start the app on localhost and verify:
   overlapping calls, treats cancellation calmly, never mutates survey state,
   and never reports an unverifiable save
 - unsupported or failed file sharing exposes a byte-exact download fallback,
-  while successful capture opens the stored survey copy and its manual save action
-- capture persistence completes before the viewer opens; a simulated
-  storage-full failure remains visible and shareable for the current session
+  while successful capture stays in the survey and leaves manual sharing on the thumbnail
+- capture batches preserve selection order, render once, report once, and never
+  open the viewer automatically; a simulated storage-full failure remains
+  persistently visible and shareable for the current session
 - new captures are mirrored byte-exactly to IndexedDB under unique stable IDs,
   while schema v2 stays authoritative if the new store is unavailable
 - the derived photo manifest includes every photo exactly once in stable site,
@@ -251,3 +254,12 @@ descriptor backups, and portable schema-v3 exports that re-inline every image.
 Capture remains unchanged and schema v2 stays authoritative, so this release
 creates no descriptors during normal use and can be rolled back without a data
 migration. The next release is the deliberate capture-and-schema flip.
+
+Version 1.9.1 removes capture-time viewer interruption and processes multi-photo
+selections sequentially, preserving the order that flows into the manifest, ZIP
+and PDF. A capture batch renders and reports once. If local survey persistence
+fails, an undismissable section notice keeps every in-memory photo reachable
+through its manual Save action. Schema v2 and the existing dual-write storage
+authority remain unchanged. If the temporary device-storage mirror fails, the
+Data & storage panel keeps the export warning visible instead of letting the
+batch summary overwrite it.
