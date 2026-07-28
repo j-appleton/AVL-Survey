@@ -6,6 +6,7 @@
   var DB_NAME = "avl-photos";
   var DB_VERSION = 1;
   var STORE_NAME = "photos";
+  var OPEN_TIMEOUT_MS = 5000;
   var dbPromise = null;
   var fallbackCounter = 0;
 
@@ -69,14 +70,32 @@
     if(dbPromise) return dbPromise;
     if(!global.indexedDB) return Promise.reject(new Error("IndexedDB is unavailable"));
 
-    dbPromise = new Promise(function(resolve, reject){
+    var pending = new Promise(function(resolve, reject){
       var request;
+      var settled = false;
+      var timer = null;
+
+      function clearOpenTimer(){
+        if(timer !== null){
+          global.clearTimeout(timer);
+          timer = null;
+        }
+      }
+      function fail(error){
+        if(settled) return;
+        settled = true;
+        clearOpenTimer();
+        reject(error);
+      }
+
       try { request = global.indexedDB.open(DB_NAME, DB_VERSION); }
       catch(error){
-        dbPromise = null;
-        reject(error);
+        fail(error);
         return;
       }
+      timer = global.setTimeout(function(){
+        fail(new Error("Opening photo storage timed out"));
+      }, OPEN_TIMEOUT_MS);
 
       request.onupgradeneeded = function(){
         var db = request.result;
@@ -86,6 +105,12 @@
       };
       request.onsuccess = function(){
         var db = request.result;
+        if(settled){
+          try { db.close(); } catch(error){}
+          return;
+        }
+        settled = true;
+        clearOpenTimer();
         db.onversionchange = function(){
           db.close();
           dbPromise = null;
@@ -93,11 +118,17 @@
         resolve(db);
       };
       request.onerror = function(){
-        dbPromise = null;
-        reject(request.error || new Error("Could not open photo storage"));
+        fail(request.error || new Error("Could not open photo storage"));
+      };
+      request.onblocked = function(){
+        fail(new Error("Photo storage is blocked by another open app or tab"));
       };
     });
-    return dbPromise;
+    dbPromise = pending;
+    pending.catch(function(){
+      if(dbPromise === pending) dbPromise = null;
+    });
+    return pending;
   }
 
   function transaction(mode, operation){

@@ -1,6 +1,6 @@
 /* Preplot — offline service worker.
    Bump CACHE when you change any app file; old caches are purged on activate. */
-var CACHE = "avl-survey-v15";
+var CACHE = "avl-survey-v16";
 
 var ASSETS = [
   "./",
@@ -13,11 +13,28 @@ var ASSETS = [
   "./favicon.png"
 ];
 
+function verifyOfflineCache(cache){
+  return Promise.all(ASSETS.map(function(asset){
+    return cache.match(asset);
+  })).then(function(matches){
+    for(var i=0;i<matches.length;i++){
+      if(!matches[i]) throw new Error("Offline cache is incomplete: " + ASSETS[i]);
+    }
+    return cache;
+  });
+}
+
 self.addEventListener("install", function(e){
   e.waitUntil(
     caches.open(CACHE)
-      .then(function(c){ return c.addAll(ASSETS); })
-      .catch(function(){ /* a missing optional asset must not block install */ })
+      .then(function(c){
+        return c.addAll(ASSETS).then(function(){
+          return verifyOfflineCache(c);
+        });
+      })
+      .catch(function(error){
+        return caches.delete(CACHE).then(function(){ throw error; });
+      })
   );
 });
 
@@ -29,7 +46,9 @@ self.addEventListener("message", function(e){
 
 self.addEventListener("activate", function(e){
   e.waitUntil(
-    caches.keys()
+    caches.open(CACHE)
+      .then(verifyOfflineCache)
+      .then(function(){ return caches.keys(); })
       .then(function(keys){
         return Promise.all(keys.map(function(k){
           return k === CACHE ? null : caches.delete(k);

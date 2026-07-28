@@ -447,3 +447,117 @@ test("failed readback leaves one orphan, falls back inline and degrades the rest
     assert.match(result.toast,/2 are stored in the survey file rather than device storage/);
   });
 });
+
+test("a blocked photo-store open rejects clearly and boot degrades instead of stalling", async function(){
+  await withPhotoStoreApp({
+    init:function(){
+      localStorage.setItem("avl_survey_v1",JSON.stringify({
+        app:"avl-survey",
+        schema:3,
+        data:{
+          visit:{client:"Blocked open"},
+          log:{},
+          rooms:[{id:1,d:{name:"Stored room"}}],
+          photos:{
+            "1|notes":[{
+              id:"blocked-photo",
+              mime:"image/jpeg",
+              bytes:3,
+              width:10,
+              height:10
+            }]
+          },
+          skipped:{},
+          ui:{"1|notes":true},
+          meta:{created:"2026-07-27T00:00:00.000Z",updated:"2026-07-27T00:00:00.000Z"}
+        }
+      }));
+      Object.defineProperty(window.indexedDB,"open",{
+        configurable:true,
+        value:function(){
+          var request = {};
+          window.setTimeout(function(){
+            if(request.onblocked) request.onblocked();
+          },0);
+          return request;
+        }
+      });
+    }
+  },async function(page){
+    await page.waitForFunction(function(){
+      var wrap = document.getElementById("storagewrap");
+      return !!window.__avl && !!wrap &&
+        /Photo storage could not be checked/.test(wrap.textContent);
+    });
+    var result = await page.evaluate(async function(){
+      var message = "";
+      try { await window.AVLPhotoStore.keys(); }
+      catch(error){ message = error && error.message; }
+      return {
+        message:message,
+        appReady:!!window.__avl,
+        client:window.__avl.S().visit.client,
+        storage:document.getElementById("storagewrap").textContent
+      };
+    });
+    assert.equal(result.message,"Photo storage is blocked by another open app or tab");
+    assert.equal(result.appReady,true);
+    assert.equal(result.client,"Blocked open");
+    assert.match(result.storage,/Photo storage could not be checked/);
+  });
+});
+
+test("a photo-store open that never settles times out and leaves the app usable", async function(){
+  await withPhotoStoreApp({
+    init:function(){
+      localStorage.setItem("avl_survey_v1",JSON.stringify({
+        app:"avl-survey",
+        schema:3,
+        data:{
+          visit:{client:"Timed open"},
+          log:{},
+          rooms:[{id:1,d:{name:"Stored room"}}],
+          photos:{
+            "1|notes":[{
+              id:"timed-photo",
+              mime:"image/jpeg",
+              bytes:3,
+              width:10,
+              height:10
+            }]
+          },
+          skipped:{},
+          ui:{"1|notes":true},
+          meta:{created:"2026-07-27T00:00:00.000Z",updated:"2026-07-27T00:00:00.000Z"}
+        }
+      }));
+      var realSetTimeout = window.setTimeout;
+      window.setTimeout = function(fn,delay){
+        return realSetTimeout(fn,delay === 5000 ? 25 : delay);
+      };
+      Object.defineProperty(window.indexedDB,"open",{
+        configurable:true,
+        value:function(){ return {}; }
+      });
+    }
+  },async function(page){
+    await page.waitForFunction(function(){
+      var wrap = document.getElementById("storagewrap");
+      return !!window.__avl && !!wrap &&
+        /Photo storage could not be checked/.test(wrap.textContent);
+    });
+    var result = await page.evaluate(async function(){
+      var message = "";
+      try { await window.AVLPhotoStore.keys(); }
+      catch(error){ message = error && error.message; }
+      return {
+        message:message,
+        client:window.__avl.S().visit.client,
+        addRoomAvailable:!!document.getElementById("addroom")
+      };
+    });
+    assert.equal(result.message,"Opening photo storage timed out");
+    assert.equal(result.client,"Timed open");
+    assert.equal(result.addRoomAvailable,true);
+  });
+});

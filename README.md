@@ -83,8 +83,9 @@ it works with no signal — the service worker caches everything on first load.
   action for every in-memory image.
 - At the end of a visit, open **Data & storage** and choose
   **Prepare photo package**. The app builds one ZIP containing every stored
-  survey photo under its handoff filename, a versioned survey JSON export, and
-  an Excel-friendly photo manifest. **Share package…** opens the device share
+  survey photo under its handoff filename, compact survey JSON that references
+  those packaged photo files, and an Excel-friendly photo manifest.
+  **Share package…** opens the device share
   sheet for Google Drive; **Download package instead** is always available.
   The app cannot verify either destination, so it tells you to confirm the file
   in Drive or Files and never claims that it was uploaded or saved.
@@ -113,7 +114,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v15";  // bump this for every runtime change
+var CACHE = "avl-survey-v16";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -160,8 +161,9 @@ The browser suites start the app on localhost and verify:
   room, section, and bucket order; filenames use global references, visible room
   positions, frozen section slugs, and the source image MIME
 - the prepared photo ZIP extracts with an independent system reader, preserves
-  every source byte and manifest filename in canonical order, carries a
-  re-importable survey export, and writes RFC-compatible CSV with a UTF-8 BOM
+  every source byte and manifest filename in canonical order, carries compact
+  survey JSON without a second base64 copy, and writes RFC-compatible CSV with
+  a UTF-8 BOM
 - package sharing passes the exact prepared ZIP to `canShare()` and `share()`
   inside the trusted tap, blocks overlaps, permits cancellation and retry, and
   never mutates the survey or makes an unverifiable success claim
