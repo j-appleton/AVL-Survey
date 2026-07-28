@@ -235,12 +235,37 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
           }
         );
       });
-      assert.equal(
-        await page.evaluate(function(payload){
-          return window.__avl.applyImport(JSON.stringify(payload));
-        },exported),
-        false,
+      /* Rejecting it is correct. Telling the surveyor the photos are on the
+         originating device is not: they are in photos/ in the folder just
+         unzipped. The two rejections describe different situations and must
+         not share one message. */
+      var archiveRejection = await page.evaluate(async function(payload){
+        var ok = window.__avl.applyImport(JSON.stringify(payload));
+        await new Promise(function(r){ setTimeout(r,60); });
+        return {ok:String(ok), message:document.getElementById("toast").textContent};
+      },exported);
+      var deviceOnlyRejection = await page.evaluate(async function(){
+        var ok = window.__avl.applyImport(JSON.stringify({
+          app:"avl-survey", schema:3, appVersion:"1.10.1",
+          data:{visit:{},log:{},rooms:[],
+                photos:{"log|main":[{id:"elsewhere-1",mime:"image/jpeg",bytes:4,width:9,height:9}]},
+                skipped:{},ui:{},meta:{}}
+        }));
+        await new Promise(function(r){ setTimeout(r,60); });
+        return {ok:String(ok), message:document.getElementById("toast").textContent};
+      });
+
+      assert.equal(archiveRejection.ok,"false",
         "the compact archive JSON must not masquerade as a standalone portable export"
+      );
+      assert.equal(deviceOnlyRejection.ok,"false");
+      assert.notEqual(
+        archiveRejection.message, deviceOnlyRejection.message,
+        "an archive export and a device-only export are different problems and need different advice"
+      );
+      assert.doesNotMatch(
+        archiveRejection.message, /from that device/i,
+        "the archive's photos are beside the file, not on the originating device"
       );
       assert.equal(await surveyStateSnapshot(page),before);
 

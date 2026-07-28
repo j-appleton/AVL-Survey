@@ -3599,6 +3599,10 @@ function applyImport(text){
   catch(e){ toast("That file isn't valid JSON"); return false; }
 
   if(parsed && parsed.app === "avl-survey" && parsed.schema === 3){
+    if(parsed.photoFormat === "archive"){
+      toast("Not imported: This is the survey file from inside a photo package. Its photos are in the photos folder beside it. Use Export data for a file that imports on its own.");
+      return false;
+    }
     if(parsed.photoFormat !== "inline"){
       toast("Not imported: This file lists photos that are stored on the device it came from. Export again from that device.");
       return false;
