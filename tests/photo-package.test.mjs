@@ -210,48 +210,39 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
       var exported = JSON.parse(await readFile(join(extracted,"survey-export.json"),"utf8"));
       assert.equal(exported.app, "avl-survey");
       assert.equal(exported.schema, 3);
-      assert.equal(exported.photoFormat, "inline");
+      assert.equal(exported.photoFormat, "archive");
       assert.deepEqual(
         Object.keys(exported.data.photos),
         Object.keys(packageState().photos)
       );
-      Object.keys(exported.data.photos).forEach(function(key){
+      assert.doesNotMatch(
+        JSON.stringify(exported),
+        /data:image\//,
+        "the ZIP JSON must not duplicate packaged photo bytes as base64"
+      );
+      manifest.forEach(function(entry){
+        var archived = exported.data.photos[entry.key][entry.bucketIndex];
         assert.deepEqual(
-          exported.data.photos[key].map(function(entry){ return entry.data; }),
-          packageState().photos[key]
-        );
-        exported.data.photos[key].forEach(function(entry){
-          assert.equal(typeof entry.id,"undefined");
-          assert.equal(entry.bytes,Buffer.from(entry.data.split(",")[1],"base64").length);
-        });
-      });
-      var fresh = await context.newPage();
-      await fresh.goto(origin + "/", {waitUntil:"domcontentloaded"});
-      await fresh.waitForFunction(function(){ return !!window.__avl; });
-      await fresh.evaluate(function(){ localStorage.clear(); });
-      await fresh.reload({waitUntil:"domcontentloaded"});
-      await fresh.waitForFunction(function(){ return !!window.__avl; });
-      var roundTrip = await fresh.evaluate(async function(payload){
-        var ok = await window.__avl.applyImport(JSON.stringify(payload));
-        var stored = JSON.parse(JSON.stringify(window.__avl.S().photos));
-        var portable = await window.__avl.portableEnvelope();
-        return {ok:ok,stored:stored,portable:portable.data.photos};
-      }, exported);
-      assert.equal(roundTrip.ok,true,
-        "the packaged export must re-import through the production importer");
-      Object.keys(roundTrip.stored).forEach(function(key){
-        roundTrip.stored[key].forEach(function(entry){
-          assert.equal(typeof entry.id,"string");
-          assert.equal(typeof entry.bytes,"number");
-        });
-      });
-      Object.keys(packageState().photos).forEach(function(key){
-        assert.deepEqual(
-          roundTrip.portable[key].map(function(entry){ return entry.data; }),
-          packageState().photos[key]
+          archived,
+          {
+            ref:entry.ref,
+            filename:entry.filename,
+            path:"photos/" + entry.filename,
+            mime:entry.mime,
+            bytes:entry.bytes,
+            width:0,
+            height:0
+          }
         );
       });
-      await fresh.close();
+      assert.equal(
+        await page.evaluate(function(payload){
+          return window.__avl.applyImport(JSON.stringify(payload));
+        },exported),
+        false,
+        "the compact archive JSON must not masquerade as a standalone portable export"
+      );
+      assert.equal(await surveyStateSnapshot(page),before);
 
       var csvBytes = await readFile(join(extracted,"photo-manifest.csv"));
       assert.deepEqual(Array.from(csvBytes.subarray(0,3)),[0xEF,0xBB,0xBF]);

@@ -379,7 +379,7 @@ test("deleting a photo strands no backup: records survive and restore byte-exact
   });
 });
 
-test("a descriptor-backed package extracts with exact bytes and a portable inline survey", async function(){
+test("a descriptor-backed package extracts exact bytes without duplicating them in JSON", async function(){
   await withApp(async function(page){
     await addRecord(page,"package-a","image/jpeg",A_BYTES,900,675);
     await addRecord(page,"package-b","image/png",B_BYTES,640,480);
@@ -419,14 +419,36 @@ test("a descriptor-backed package extracts with exact bytes and a portable inlin
         Array.from(await readFile(join(extracted,"photos",result.manifest[1].filename))),
         B_BYTES
       );
-      var portable = JSON.parse(await readFile(join(extracted,"survey-export.json"),"utf8"));
-      assert.equal(portable.schema,3);
-      assert.equal(portable.photoFormat,"inline");
+      var packaged = JSON.parse(await readFile(join(extracted,"survey-export.json"),"utf8"));
+      assert.equal(packaged.schema,3);
+      assert.equal(packaged.photoFormat,"archive");
+      assert.doesNotMatch(JSON.stringify(packaged),/data:image\//);
       assert.deepEqual(
-        portable.data.photos["1|notes"].map(function(entry){
-          return Array.from(Buffer.from(entry.data.split(",")[1],"base64"));
+        packaged.data.photos["1|notes"].map(function(entry){
+          return {
+            path:entry.path,
+            mime:entry.mime,
+            bytes:entry.bytes,
+            width:entry.width,
+            height:entry.height
+          };
         }),
-        [A_BYTES,B_BYTES]
+        [
+          {
+            path:"photos/" + result.manifest[0].filename,
+            mime:"image/jpeg",
+            bytes:A_BYTES.length,
+            width:900,
+            height:675
+          },
+          {
+            path:"photos/" + result.manifest[1].filename,
+            mime:"image/png",
+            bytes:B_BYTES.length,
+            width:640,
+            height:480
+          }
+        ]
       );
     } finally {
       await rm(scratch,{recursive:true,force:true});
