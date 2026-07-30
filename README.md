@@ -275,3 +275,9 @@ fallback if either write or verification fails. Portable imports assign fresh
 IDs and fall back as one whole file rather than leaving mixed authority. Field
 edits made during the short verification window are included in the batch-end
 save, and unreadable prior data keeps a persistent salvage warning.
+
+Version 1.11 gives every photo-package entry one named survey root. Full photo
+bytes live under `photos/`, while the manifest and compact archive-only survey
+record live under `data/`. Photo paths inside the JSON are explicitly relative
+to that archive root, so moving the JSON itself cannot silently change what its
+cross-references mean.

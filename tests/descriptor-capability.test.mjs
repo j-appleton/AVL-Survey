@@ -407,21 +407,25 @@ test("a descriptor-backed package extracts exact bytes without duplicating them 
     assert.equal(await surveyStateSnapshot(page),before);
     var scratch = await mkdtemp(join(tmpdir(),"avl-descriptor-package-"));
     try {
+      var root = "avl-survey-descriptor-client-2026-07-27";
       var archivePath = join(scratch,"package.zip");
       var extracted = join(scratch,"out");
       await writeFile(archivePath,Buffer.from(result.archive));
       await execFile("/usr/bin/unzip",["-qq",archivePath,"-d",extracted]);
       assert.deepEqual(
-        Array.from(await readFile(join(extracted,"photos",result.manifest[0].filename))),
+        Array.from(await readFile(join(extracted,root,"photos",result.manifest[0].filename))),
         A_BYTES
       );
       assert.deepEqual(
-        Array.from(await readFile(join(extracted,"photos",result.manifest[1].filename))),
+        Array.from(await readFile(join(extracted,root,"photos",result.manifest[1].filename))),
         B_BYTES
       );
-      var packaged = JSON.parse(await readFile(join(extracted,"survey-export.json"),"utf8"));
+      var packaged = JSON.parse(
+        await readFile(join(extracted,root,"data","survey-export.json"),"utf8")
+      );
       assert.equal(packaged.schema,3);
       assert.equal(packaged.photoFormat,"archive");
+      assert.equal(packaged.pathBase,"archive-root");
       assert.doesNotMatch(JSON.stringify(packaged),/data:image\//);
       assert.deepEqual(
         packaged.data.photos["1|notes"].map(function(entry){

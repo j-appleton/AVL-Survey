@@ -180,6 +180,7 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
 
     var manifest = await page.evaluate(function(){ return window.__avl.photoManifest(); });
     var bytes = await packageBytes(page);
+    var root = "avl-survey-exact-package-client-2026-07-26";
     var scratch = await mkdtemp(join(tmpdir(),"avl-photo-package-"));
     try {
       var archivePath = join(scratch,"package.zip");
@@ -189,17 +190,17 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
       var listing = await execFile("/usr/bin/unzip",["-Z1",archivePath]);
       var paths = listing.stdout.trim().split("\n");
       assert.deepEqual(paths,[
-        "photos/" + manifest[0].filename,
-        "photos/" + manifest[1].filename,
-        "photos/" + manifest[2].filename,
-        "photos/" + manifest[3].filename,
-        "survey-export.json",
-        "photo-manifest.csv"
+        root + "/photos/" + manifest[0].filename,
+        root + "/photos/" + manifest[1].filename,
+        root + "/photos/" + manifest[2].filename,
+        root + "/photos/" + manifest[3].filename,
+        root + "/data/survey-export.json",
+        root + "/data/photo-manifest.csv"
       ]);
       await execFile("/usr/bin/unzip",["-qq",archivePath,"-d",extracted]);
       var expectedPhotoBytes = [JPG_BYTES,PNG_BYTES,PNG_BYTES,JPG_BYTES];
       for(var i=0;i<manifest.length;i++){
-        var extractedPhoto = await readFile(join(extracted,"photos",manifest[i].filename));
+        var extractedPhoto = await readFile(join(extracted,root,"photos",manifest[i].filename));
         assert.deepEqual(
           Array.from(extractedPhoto),
           expectedPhotoBytes[i],
@@ -207,10 +208,13 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
         );
       }
 
-      var exported = JSON.parse(await readFile(join(extracted,"survey-export.json"),"utf8"));
+      var exported = JSON.parse(
+        await readFile(join(extracted,root,"data","survey-export.json"),"utf8")
+      );
       assert.equal(exported.app, "avl-survey");
       assert.equal(exported.schema, 3);
       assert.equal(exported.photoFormat, "archive");
+      assert.equal(exported.pathBase, "archive-root");
       assert.deepEqual(
         Object.keys(exported.data.photos),
         Object.keys(packageState().photos)
@@ -233,6 +237,11 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
             width:0,
             height:0
           }
+        );
+        assert.equal(
+          root + "/" + archived.path,
+          paths[manifest.indexOf(entry)],
+          "archive JSON photo paths stay root-relative while ZIP entries carry the folder prefix"
         );
       });
       /* Rejecting it is correct. Telling the surveyor the photos are on the
@@ -269,7 +278,9 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
       );
       assert.equal(await surveyStateSnapshot(page),before);
 
-      var csvBytes = await readFile(join(extracted,"photo-manifest.csv"));
+      var csvBytes = await readFile(
+        join(extracted,root,"data","photo-manifest.csv")
+      );
       assert.deepEqual(Array.from(csvBytes.subarray(0,3)),[0xEF,0xBB,0xBF]);
       var csvText = csvBytes.subarray(3).toString("utf8");
       assert.equal(csvText.endsWith("\r\n"),true);
@@ -323,6 +334,7 @@ test("captured selection order reaches independently extracted ZIP photo order",
     },sources);
     await prepare(page);
     var manifest = await page.evaluate(function(){ return window.__avl.photoManifest(); });
+    var root = "avl-survey-capture-order-2026-07-28";
     var bytes = await packageBytes(page);
     var scratch = await mkdtemp(join(tmpdir(),"avl-capture-order-"));
     try {
@@ -331,9 +343,9 @@ test("captured selection order reaches independently extracted ZIP photo order",
       await writeFile(archivePath,bytes);
       var listing = await execFile("/usr/bin/unzip",["-Z1",archivePath]);
       assert.deepEqual(listing.stdout.trim().split("\n").slice(0,3),[
-        "photos/001_R01_notes.jpg",
-        "photos/002_R01_notes.jpg",
-        "photos/003_R01_notes.jpg"
+        root + "/photos/001_R01_notes.jpg",
+        root + "/photos/002_R01_notes.jpg",
+        root + "/photos/003_R01_notes.jpg"
       ]);
       assert.deepEqual(
         manifest.map(function(entry){ return entry.filename; }),
@@ -341,7 +353,9 @@ test("captured selection order reaches independently extracted ZIP photo order",
       );
       await execFile("/usr/bin/unzip",["-qq",archivePath,"-d",extracted]);
       for(var i=0;i<manifest.length;i++){
-        var extractedPhoto = await readFile(join(extracted,"photos",manifest[i].filename));
+        var extractedPhoto = await readFile(
+          join(extracted,root,"photos",manifest[i].filename)
+        );
         assert.deepEqual(Array.from(extractedPhoto),[[1],[2,3],[4,5,6]][i]);
       }
     } finally {
