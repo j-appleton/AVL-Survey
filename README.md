@@ -281,3 +281,9 @@ bytes live under `photos/`, while the manifest and compact archive-only survey
 record live under `data/`. Photo paths inside the JSON are explicitly relative
 to that archive root, so moving the JSON itself cannot silently change what its
 cross-references mean.
+
+Version 1.12 adds an always-reachable Photos view in the sticky header. It is a
+second view of the canonical photo manifest, not a second photo model: order,
+capture, recovery, deletion, the full-screen viewer, ZIP names, and later PDF
+references all continue to use the same buckets and coordinates. The selected
+view is deliberately session-only and never enters exports or backups.
