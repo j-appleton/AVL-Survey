@@ -191,13 +191,14 @@ button.btn:active{transform:translateY(1px)}
 .phvnav.prev{left:4px}.phvnav.next{right:4px}
 .phvnav:disabled{opacity:.28;cursor:default}
 .phvbottom{justify-content:center;flex-wrap:wrap;padding-top:8px}
-.phvsave,.phvdownload{
+.phvsave,.phvdownload,.phvcover{
   min-height:48px;border-radius:12px;padding:11px 18px;font:inherit;font-size:15px;
   font-weight:700;cursor:pointer;text-align:center
 }
 .phvsave{width:min(100%,360px);border:1px solid #60a5fa;background:#2563eb;color:#fff}
 .phvsave:disabled{opacity:.58;cursor:default}
-.phvdownload{border:1px solid rgba(255,255,255,.5);background:transparent;color:#fff}
+.phvdownload,.phvcover{border:1px solid rgba(255,255,255,.5);background:transparent;color:#fff}
+.phvcover[aria-pressed="true"]{border-color:#5eead4;background:#134e4a;color:#fff}
 .phvdownload[hidden]{display:none}
 .phvdownload:disabled{opacity:.45;cursor:default}
 .phvhelp,.phvstatus{flex:0 0 100%;text-align:center;font-size:12px;line-height:1.35;color:#cbd5e1}
@@ -268,25 +269,6 @@ button.btn:active{transform:translateY(1px)}
 .sysnotice button:disabled{opacity:.6;cursor:default}
 .skipbtn{font-size:11px;padding:4px 8px;border-radius:99px;border:1px solid var(--line);background:none;color:var(--muted);cursor:pointer;font:inherit;font-size:11px}
 
-/* print */
-#print{display:none}
-@media print{
-  body{background:#fff;color:#000;padding:0;font-size:11pt}
-  header,.foot,#app,.toast,.sysnotices,.phviewer{display:none !important}
-  #print{display:block;padding:0 10mm}
-  #print h1{font-size:17pt;margin:0 0 2mm}
-  #print h2{font-size:13pt;margin:6mm 0 2mm;border-bottom:1.5px solid #000;padding-bottom:1mm;page-break-after:avoid}
-  #print h3{font-size:11pt;margin:4mm 0 1mm;color:#333;page-break-after:avoid}
-  #print table{width:100%;border-collapse:collapse;margin-bottom:3mm;page-break-inside:auto}
-  #print td{border-bottom:.5pt solid #bbb;padding:1.4mm 1mm;vertical-align:top;font-size:9.5pt}
-  #print td.k{width:42%;color:#444}
-  #print td.v{font-weight:600}
-  #print .rm{page-break-before:always}
-  #print .pg{display:flex;flex-wrap:wrap;gap:2mm;margin-bottom:3mm}
-  #print .pg img{width:44mm;height:33mm;object-fit:cover;border:.5pt solid #999}
-  #print .cal{border:1pt solid #000;padding:2mm;margin:2mm 0;font-size:10pt}
-  #print .meta{font-size:9pt;color:#555;margin-bottom:4mm}
-}
 </style>
 </head>
 <body>
@@ -315,7 +297,6 @@ button.btn:active{transform:translateY(1px)}
 
 <div class="toast" id="toast"></div>
 <div class="sysnotices" id="systemNotices" aria-live="polite"></div>
-<div id="print"></div>
 <input type="file" id="filein" accept="image/*" capture="environment" multiple hidden>
 <input type="file" id="jsonin" accept="application/json,.json" hidden>
 
@@ -342,7 +323,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.12.0";
+var APP_VERSION = "1.13.0";
 var SCHEMA = 3;
 
 /* ============================================================
@@ -712,13 +693,15 @@ function blobToDataUrl(blob){
 }
 function portablePhotoEntry(key, index){
   var entry = photoValue(key,index);
+  var selected = !!(entry && S.visit.coverPhotoId === photoEntryIdentity(entry));
   if(typeof entry === "string"){
     return Promise.resolve({
       mime:photoMime(entry),
       width:0,
       height:0,
       bytes:photoEntryBytes(entry),
-      data:entry
+      data:entry,
+      cover:selected
     });
   }
   if(!isPhotoDescriptor(entry)) return Promise.reject(new Error("Photo entry is malformed"));
@@ -729,7 +712,8 @@ function portablePhotoEntry(key, index){
         width:entry.width,
         height:entry.height,
         bytes:entry.bytes,
-        data:data
+        data:data,
+        cover:selected
       };
     });
   });
@@ -1875,6 +1859,7 @@ function photoPackageStatus(){
     progress:pkg ? pkg.progress : 0,
     filename:pkg && pkg.file ? pkg.file.name : "",
     size:pkg && pkg.file ? pkg.file.size : 0,
+    phase:pkg ? (pkg.phase || "") : "",
     message:pkg ? (pkg.message || "") : "",
     inFlight:!!photoPackageFlight
   };
@@ -1888,11 +1873,18 @@ function photoPackageHTML(){
   var h = '<div class="pkg"><span class="flab">Photo package</span>';
   if(!pkg || pkg.status === "idle"){
     h += '<button type="button" class="btn pri" id="pkgprepare">Prepare photo package</button>' +
-      '<span class="hint">Bundles every survey photo, the survey data and a photo list into one ZIP.</span>';
+      '<span class="hint">Bundles every survey photo, a designed PDF, the survey data and a photo list into one ZIP.</span>';
   } else if(pkg.status === "preparing"){
-    var label = pkg.total
-      ? ("Preparing photo " + Math.max(1,pkg.progress) + " of " + pkg.total + "\u2026")
-      : "Preparing package\u2026";
+    var label;
+    if(pkg.phase === "report"){
+      label = pkg.total
+        ? ("Preparing report photo " + Math.max(1,pkg.progress) + " of " + pkg.total + "\u2026")
+        : "Building report\u2026";
+    } else {
+      label = pkg.total
+        ? ("Preparing photo " + Math.max(1,pkg.progress) + " of " + pkg.total + "\u2026")
+        : "Preparing package\u2026";
+    }
     h += '<button type="button" class="btn pri" disabled>' + esc(label) + '</button>';
   } else if(pkg.status === "stale"){
     h += '<div class="pkgstatus">' + esc(pkg.message) + '</div>' +
@@ -1984,6 +1976,7 @@ function preparePhotoPackage(){
     manifest:manifest,
     sources:sources,
     head:packageHead(),
+    phase:"photos",
     photoEntries:[],
     file:null,
     objectUrl:null
@@ -2007,10 +2000,14 @@ function preparePhotoPackage(){
   }
   function finishPreparation(){
     if(preparedPhotoPackage !== pkg) return;
+    var report = pkg.pendingReport;
+    pkg.pendingReport = null;
+    if(!report){ failPreparation(); return; }
     try {
       var root = slug();
       var json = JSON.stringify(packageEnvelope(pkg.manifest),null,2);
       var entries = pkg.photoEntries.slice();
+      entries.push({name:root + "/" + root + ".pdf",bytes:report.bytes});
       entries.push({name:root + "/data/survey-export.json",bytes:textBytes(json)});
       entries.push({name:root + "/data/photo-manifest.csv",bytes:photoManifestCSV(pkg.manifest)});
       var archive = zipStore(entries);
@@ -2019,7 +2016,9 @@ function preparePhotoPackage(){
         slug() + "-package.zip",
         {type:"application/zip",lastModified:Date.now()}
       );
+      pkg.reportLayout = report.layout;
       pkg.photoEntries = [];
+      report.bytes = null;
       if(!photoPackageIsCurrent(pkg)){
         stalePreparation();
         return;
@@ -2032,10 +2031,33 @@ function preparePhotoPackage(){
       failPreparation();
     }
   }
+  function prepareReport(){
+    if(preparedPhotoPackage !== pkg) return;
+    pkg.phase = "report";
+    pkg.progress = pkg.total ? 1 : 0;
+    refreshPhotoPackageUI();
+    preparePdfRenditions(pkg.manifest,function(entry,entryIndex){
+      var photo = pkg.photoEntries[entryIndex];
+      if(!photo) return Promise.reject(new Error("Package photo is missing"));
+      return {bytes:photo.bytes,mime:entry.mime};
+    },function(done){
+      pkg.progress = done;
+      refreshPhotoPackageUI();
+    }).then(function(images){
+      if(preparedPhotoPackage !== pkg) return;
+      if(!photoPackageIsCurrent(pkg)){
+        images.length = 0;
+        stalePreparation();
+        return;
+      }
+      pkg.pendingReport = assemblePdfReport(pkg.manifest,images);
+      setTimeout(finishPreparation,0);
+    }).catch(failPreparation);
+  }
   function nextPhoto(){
     if(preparedPhotoPackage !== pkg) return;
     if(index >= pkg.manifest.length){
-      setTimeout(finishPreparation,0);
+      setTimeout(prepareReport,0);
       return;
     }
     var entry = pkg.manifest[index];
@@ -2186,6 +2208,13 @@ function refreshPhotoShareUI(){
     : (resident ? "Save photo\u2026" : (photoViewer.missing ? "Photo missing" : "Preparing photo\u2026"));
   photoViewer.download.hidden = !photoViewer.missing && photoViewer.fallbackId !== id;
   photoViewer.download.disabled = photoViewer.missing;
+  if(photoViewer.cover){
+    var current = photoValue(photoViewer.key,photoViewer.index);
+    var selected = !!(current && S.visit.coverPhotoId === photoEntryIdentity(current));
+    photoViewer.cover.setAttribute("aria-pressed",String(selected));
+    photoViewer.cover.textContent = selected ? "Cover photo \u2713" : "Use as cover";
+    photoViewer.cover.disabled = photoViewer.missing;
+  }
   photoViewer.help.textContent = photoViewer.notice || defaultPhotoShareHelp();
   photoViewer.status.textContent = photoViewer.message || "";
 }
@@ -2437,6 +2466,7 @@ function openPhotoViewer(key, index, notice){
     '</div>' +
     '<div class="phvbottom">' +
       '<button type="button" class="phvsave" data-phv-save>Save photo\u2026</button>' +
+      '<button type="button" class="phvcover" data-phv-cover aria-pressed="false">Use as cover</button>' +
       '<button type="button" class="phvdownload" data-phv-download hidden>Download image</button>' +
       '<div class="phvhelp"></div>' +
       '<div class="phvstatus" aria-live="polite"></div>' +
@@ -2452,6 +2482,7 @@ function openPhotoViewer(key, index, notice){
     prev:overlay.querySelector("[data-phv-prev]"),
     next:overlay.querySelector("[data-phv-next]"),
     save:overlay.querySelector("[data-phv-save]"),
+    cover:overlay.querySelector("[data-phv-cover]"),
     download:overlay.querySelector("[data-phv-download]"),
     help:overlay.querySelector(".phvhelp"),
     status:overlay.querySelector(".phvstatus")
@@ -2467,6 +2498,15 @@ function openPhotoViewer(key, index, notice){
   };
   photoViewer.save.onclick = function(){
     if(photoViewer) sharePhoto(photoViewer.key, photoViewer.index);
+  };
+  photoViewer.cover.onclick = function(){
+    if(!photoViewer || photoViewer.missing) return;
+    var entry = photoValue(photoViewer.key,photoViewer.index);
+    if(!entry) return;
+    var identity = photoEntryIdentity(entry);
+    S.visit.coverPhotoId = S.visit.coverPhotoId === identity ? "" : identity;
+    save();
+    refreshPhotoShareUI();
   };
   photoViewer.download.onclick = function(){
     if(photoViewer) downloadPhoto(photoViewer.key, photoViewer.index);
@@ -3122,6 +3162,7 @@ document.addEventListener("click", function(e){
         render();
         return;
       }
+      clearCoverPhotoIfEntry(list[index]);
       list.splice(index, 1);
       adjustPhotoCaptureRecoveriesAfterDelete(pk,index);
       save(); render();
@@ -3142,7 +3183,11 @@ document.addEventListener("click", function(e){
     var rid = t.getAttribute("data-delroom");
     armConfirm(t, "Tap again to delete", function(){
       S.rooms = S.rooms.filter(function(r){ return String(r.id) !== rid; });
-      Object.keys(photoBuckets()).forEach(function(pk){ if(pk.indexOf(rid + "|") === 0) delete S.photos[pk]; });
+      Object.keys(photoBuckets()).forEach(function(pk){
+        if(pk.indexOf(rid + "|") !== 0) return;
+        photoList(pk).forEach(clearCoverPhotoIfEntry);
+        delete S.photos[pk];
+      });
       save(); render();
     });
     return;
@@ -3257,6 +3302,14 @@ function adjustPhotoCaptureRecoveriesAfterDelete(key, index){
     if(item.index > index) item.index--;
     return true;
   });
+}
+
+function clearCoverPhotoIfEntry(entry){
+  if(entry && S.visit.coverPhotoId === photoEntryIdentity(entry)){
+    S.visit.coverPhotoId = "";
+    return true;
+  }
+  return false;
 }
 
 function setPhotoStoreFailure(kind, error){
@@ -3633,6 +3686,9 @@ function portableImportState(payload, useDescriptors){
     meta:payload.data.meta
   }));
   var jobs = [];
+  var coverJob = null;
+  var incomingCover = data.visit && data.visit.coverPhotoId;
+  if(data.visit) data.visit.coverPhotoId = "";
   var keys = Object.keys(sourcePhotos);
   for(var k=0;k<keys.length;k++){
     var list = sourcePhotos[keys[k]];
@@ -3642,13 +3698,19 @@ function portableImportState(payload, useDescriptors){
       if(!portablePhotoValid(list[i])){
         return Promise.reject(new Error("Portable photo data is malformed"));
       }
-      jobs.push({key:keys[k], value:list[i]});
+      var job = {key:keys[k], value:list[i]};
+      if(list[i].cover === true || (incomingCover && incomingCover === list[i].data)){
+        if(coverJob) return Promise.reject(new Error("Portable photo data has more than one cover"));
+        coverJob = job;
+      }
+      jobs.push(job);
     }
   }
   var baseValidation = validate(data);
   if(!baseValidation.ok) return Promise.reject(new Error(baseValidation.reason));
   if(!useDescriptors){
     jobs.forEach(function(job){ data.photos[job.key].push(job.value.data); });
+    if(coverJob) data.visit.coverPhotoId = coverJob.value.data;
     return Promise.resolve(coerce(data));
   }
 
@@ -3712,6 +3774,7 @@ function portableImportState(payload, useDescriptors){
       if(seen[descriptor.id]) throw new Error("Photo storage returned a duplicate id");
       seen[descriptor.id] = true;
       data.photos[item.job.key].push(descriptor);
+      if(item.job === coverJob) data.visit.coverPhotoId = descriptor.id;
     });
     var result = validate(data);
     if(!result.ok) throw new Error(result.reason);
@@ -3723,6 +3786,7 @@ function portableImportState(payload, useDescriptors){
     });
     Object.keys(data.photos).forEach(function(key){ data.photos[key] = []; });
     jobs.forEach(function(job){ data.photos[job.key].push(job.value.data); });
+    if(coverJob) data.visit.coverPhotoId = coverJob.value.data;
     return coerce(data);
   });
 }
@@ -3808,12 +3872,768 @@ document.getElementById("jsonin").addEventListener("change", function(e){
 });
 
 /* ============================================================
-   PRINT / PDF VIEW
+   GENERATED PDF
+   A small, dependency-free PDF 1.4 writer. Page definitions below are data
+   over drawing primitives; the byte writer knows nothing about report layout.
    ============================================================ */
-function label(fields,k){
-  var f = fields.filter(function(x){ return x.k === k; })[0];
-  return f ? f.l : k;
+var PDF_COLORS = {
+  navy:"#16283C",
+  teal:"#2C7A7B",
+  gold:"#C8992F",
+  card:"#E9EEF3",
+  ink:"#1A2B3C",
+  muted:"#64748B"
+};
+var PDF_WHITE = "#FFFFFF";
+var PDF_WIDTHS_REGULAR = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584,350,556,350,222,556,333,1000,556,556,333,1000,667,333,1000,350,611,350,350,222,222,333,333,350,556,1000,333,1000,500,333,944,350,500,667,278,333,556,556,556,556,260,556,333,737,370,556,584,333,737,333,400,584,333,333,333,556,537,278,333,333,365,556,834,834,834,611,667,667,667,667,667,667,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,500,556,556,556,556,278,278,278,278,556,556,556,556,556,556,556,584,611,556,556,556,556,500,556,500];
+var PDF_WIDTHS_BOLD = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584,350,556,350,278,556,500,1000,556,556,333,1000,667,333,1000,350,611,350,350,278,278,500,500,350,556,1000,333,1000,556,333,944,350,500,667,278,333,556,556,556,556,280,556,333,737,370,556,584,333,737,333,400,584,333,333,333,611,556,278,333,333,365,556,834,834,834,611,722,722,722,722,722,722,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,556,556,556,556,556,278,278,278,278,611,611,611,611,611,611,611,584,611,611,611,611,611,556,611,556];
+var PDF_WINANSI_SPECIAL = {
+  "\u20ac":128,"\u201a":130,"\u0192":131,"\u201e":132,"\u2026":133,
+  "\u2020":134,"\u2021":135,"\u02c6":136,"\u2030":137,"\u0160":138,
+  "\u2039":139,"\u0152":140,"\u017d":142,"\u2018":145,"\u2019":146,
+  "\u201c":147,"\u201d":148,"\u2022":149,"\u2013":150,"\u2014":151,
+  "\u02dc":152,"\u2122":153,"\u0161":154,"\u203a":155,"\u0153":156,
+  "\u017e":158,"\u0178":159
+};
+var PDF_ASCII_FALLBACK = {
+  "\u2192":"->","\u2190":"<-","\u2264":"<=","\u2265":">=","\u00d7":"x",
+  "\u2212":"-","\u2044":"/","\u00a0":" ","\u2009":" ","\u202f":" ",
+  "\u0100":"A","\u0101":"a","\u0102":"A","\u0103":"a","\u0104":"A","\u0105":"a",
+  "\u0106":"C","\u0107":"c","\u010c":"C","\u010d":"c","\u0112":"E","\u0113":"e",
+  "\u0118":"E","\u0119":"e","\u012a":"I","\u012b":"i","\u0141":"L","\u0142":"l",
+  "\u0143":"N","\u0144":"n","\u0147":"N","\u0148":"n","\u014c":"O","\u014d":"o",
+  "\u0154":"R","\u0155":"r","\u0158":"R","\u0159":"r","\u015a":"S","\u015b":"s",
+  "\u016a":"U","\u016b":"u","\u0179":"Z","\u017a":"z","\u017b":"Z","\u017c":"z"
+};
+
+function pdfWinAnsiBytes(value){
+  var text = String(value === undefined || value === null ? "" : value);
+  var out = [];
+  for(var i=0;i<text.length;i++){
+    var ch = text.charAt(i);
+    var code = text.charCodeAt(i);
+    if(code >= 32 && code <= 126){ out.push(code); continue; }
+    if(code >= 160 && code <= 255){ out.push(code); continue; }
+    if(PDF_WINANSI_SPECIAL[ch] !== undefined){
+      out.push(PDF_WINANSI_SPECIAL[ch]);
+      continue;
+    }
+    var fallback = PDF_ASCII_FALLBACK[ch];
+    if(fallback){
+      for(var j=0;j<fallback.length;j++) out.push(fallback.charCodeAt(j));
+      continue;
+    }
+    if(code >= 0xD800 && code <= 0xDBFF && i + 1 < text.length) i++;
+    out.push(63);
+  }
+  return out;
 }
+function pdfTextToken(value){
+  var bytes = pdfWinAnsiBytes(value);
+  var out = "(";
+  bytes.forEach(function(code){
+    if(code === 40 || code === 41 || code === 92){
+      out += "\\" + String.fromCharCode(code);
+    } else if(code < 32 || code > 126){
+      out += "\\" + ("000" + code.toString(8)).slice(-3);
+    } else {
+      out += String.fromCharCode(code);
+    }
+  });
+  return out + ")";
+}
+function pdfUnicodeHex(value){
+  var text = String(value === undefined || value === null ? "" : value);
+  var out = "FEFF";
+  for(var i=0;i<text.length;i++){
+    out += ("0000" + text.charCodeAt(i).toString(16).toUpperCase()).slice(-4);
+  }
+  return "<" + out + ">";
+}
+function pdfTextWidth(value, size, bold, spacing){
+  var widths = bold ? PDF_WIDTHS_BOLD : PDF_WIDTHS_REGULAR;
+  var bytes = pdfWinAnsiBytes(value);
+  var total = 0;
+  bytes.forEach(function(code){ total += widths[code] || widths[63]; });
+  total = total / 1000 * size;
+  if(bytes.length > 1) total += (spacing || 0) * (bytes.length - 1);
+  return total;
+}
+function pdfAscii(value){
+  var text = String(value);
+  var bytes = new Uint8Array(text.length);
+  for(var i=0;i<text.length;i++) bytes[i] = text.charCodeAt(i) & 127;
+  return bytes;
+}
+function pdfHexColor(hex){
+  var value = String(hex).replace("#","");
+  return [
+    parseInt(value.slice(0,2),16) / 255,
+    parseInt(value.slice(2,4),16) / 255,
+    parseInt(value.slice(4,6),16) / 255
+  ].map(function(n){ return n.toFixed(3); }).join(" ");
+}
+function pdfObject(ref, parts){
+  return concatBytes(
+    [pdfAscii(ref + " 0 obj\n")].concat(parts).concat([pdfAscii("\nendobj\n")])
+  );
+}
+function pdfJpegDimensions(bytes){
+  if(!bytes || bytes.length < 4 || bytes[0] !== 0xFF || bytes[1] !== 0xD8){
+    throw new Error("PDF rendition is not a JPEG");
+  }
+  var i = 2;
+  while(i + 3 < bytes.length){
+    while(i < bytes.length && bytes[i] !== 0xFF) i++;
+    while(i < bytes.length && bytes[i] === 0xFF) i++;
+    if(i >= bytes.length) break;
+    var marker = bytes[i++];
+    if(marker === 0xD8 || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)) continue;
+    if(marker === 0xD9 || marker === 0xDA) break;
+    if(i + 1 >= bytes.length) break;
+    var length = (bytes[i] << 8) + bytes[i + 1];
+    if(length < 2 || i + length > bytes.length) break;
+    var sof = marker >= 0xC0 && marker <= 0xCF &&
+      marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC;
+    if(sof && length >= 7){
+      return {
+        height:(bytes[i + 3] << 8) + bytes[i + 4],
+        width:(bytes[i + 5] << 8) + bytes[i + 6]
+      };
+    }
+    i += length;
+  }
+  throw new Error("JPEG dimensions could not be read");
+}
+function pdfWriteDocument(doc){
+  var images = doc.images || [];
+  var pages = doc.pages || [];
+  var imageStart = 5;
+  var pageStart = imageStart + images.length;
+  var infoRef = pageStart + pages.length * 2;
+  var objects = [];
+  var pageRefs = pages.map(function(page,index){ return pageStart + index * 2 + 1; });
+
+  objects[1] = pdfObject(1,[pdfAscii("<< /Type /Catalog /Pages 2 0 R >>")]);
+  objects[2] = pdfObject(2,[pdfAscii(
+    "<< /Type /Pages /Count " + pages.length + " /Kids [" +
+    pageRefs.map(function(ref){ return ref + " 0 R"; }).join(" ") + "] >>"
+  )]);
+  objects[3] = pdfObject(3,[pdfAscii(
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+  )]);
+  objects[4] = pdfObject(4,[pdfAscii(
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"
+  )]);
+
+  images.forEach(function(image,index){
+    var ref = imageStart + index;
+    objects[ref] = pdfObject(ref,[
+      pdfAscii(
+        "<< /Type /XObject /Subtype /Image /Width " + image.width +
+        " /Height " + image.height +
+        " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " +
+        image.bytes.length + " >>\nstream\n"
+      ),
+      image.bytes,
+      pdfAscii("\nendstream")
+    ]);
+  });
+
+  pages.forEach(function(page,index){
+    var contentRef = pageStart + index * 2;
+    var pageRef = contentRef + 1;
+    var content = pdfAscii(page.commands.join("\n") + "\n");
+    objects[contentRef] = pdfObject(contentRef,[
+      pdfAscii("<< /Length " + content.length + " >>\nstream\n"),
+      content,
+      pdfAscii("endstream")
+    ]);
+    var used = {};
+    (page.imageIndices || []).forEach(function(imageIndex){ used[imageIndex] = true; });
+    var xobjects = Object.keys(used).map(function(imageIndex){
+      return "/Im" + (parseInt(imageIndex,10) + 1) + " " +
+        (imageStart + parseInt(imageIndex,10)) + " 0 R";
+    }).join(" ");
+    objects[pageRef] = pdfObject(pageRef,[pdfAscii(
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + page.width + " " + page.height +
+      "] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>" +
+      (xobjects ? " /XObject << " + xobjects + " >>" : "") +
+      " >> /Contents " + contentRef + " 0 R >>"
+    )]);
+  });
+
+  objects[infoRef] = pdfObject(infoRef,[pdfAscii(
+    "<< /Title " + pdfUnicodeHex(doc.title || "Preplot site visit report") +
+    " /Creator " + pdfUnicodeHex("Preplot") + " >>"
+  )]);
+
+  var header = new Uint8Array([
+    37,80,68,70,45,49,46,52,10,37,226,227,207,211,10
+  ]);
+  var offsets = [0];
+  var body = [header];
+  var offset = header.length;
+  for(var ref=1;ref<=infoRef;ref++){
+    offsets[ref] = offset;
+    body.push(objects[ref]);
+    offset += objects[ref].length;
+  }
+  var xrefOffset = offset;
+  var xref = "xref\n0 " + (infoRef + 1) + "\n0000000000 65535 f \n";
+  for(var n=1;n<=infoRef;n++){
+    xref += ("0000000000" + offsets[n]).slice(-10) + " 00000 n \n";
+  }
+  xref += "trailer\n<< /Size " + (infoRef + 1) +
+    " /Root 1 0 R /Info " + infoRef + " 0 R >>\nstartxref\n" +
+    xrefOffset + "\n%%EOF\n";
+  body.push(pdfAscii(xref));
+  return concatBytes(body);
+}
+
+function pdfPage(width,height,kind){
+  return {width:width,height:height,kind:kind,commands:[],imageIndices:[]};
+}
+function pdfRememberImage(page,index){
+  if(page.imageIndices.indexOf(index) < 0) page.imageIndices.push(index);
+}
+function pdfFillRect(page,x,top,w,h,color){
+  page.commands.push(
+    pdfHexColor(color) + " rg " + x.toFixed(2) + " " +
+    (page.height - top - h).toFixed(2) + " " + w.toFixed(2) + " " +
+    h.toFixed(2) + " re f"
+  );
+}
+function pdfRoundedRect(page,x,top,w,h,r,color){
+  var y = page.height - top - h;
+  var k = 0.55228475;
+  var c = r * k;
+  page.commands.push(
+    pdfHexColor(color) + " rg " +
+    (x+r).toFixed(2)+" "+y.toFixed(2)+" m " +
+    (x+w-r).toFixed(2)+" "+y.toFixed(2)+" l " +
+    (x+w-r+c).toFixed(2)+" "+y.toFixed(2)+" "+(x+w).toFixed(2)+" "+(y+r-c).toFixed(2)+" "+(x+w).toFixed(2)+" "+(y+r).toFixed(2)+" c " +
+    (x+w).toFixed(2)+" "+(y+h-r).toFixed(2)+" l " +
+    (x+w).toFixed(2)+" "+(y+h-r+c).toFixed(2)+" "+(x+w-r+c).toFixed(2)+" "+(y+h).toFixed(2)+" "+(x+w-r).toFixed(2)+" "+(y+h).toFixed(2)+" c " +
+    (x+r).toFixed(2)+" "+(y+h).toFixed(2)+" l " +
+    (x+r-c).toFixed(2)+" "+(y+h).toFixed(2)+" "+x.toFixed(2)+" "+(y+h-r+c).toFixed(2)+" "+x.toFixed(2)+" "+(y+h-r).toFixed(2)+" c " +
+    x.toFixed(2)+" "+(y+r).toFixed(2)+" l " +
+    x.toFixed(2)+" "+(y+r-c).toFixed(2)+" "+(x+r-c).toFixed(2)+" "+y.toFixed(2)+" "+(x+r).toFixed(2)+" "+y.toFixed(2)+" c f"
+  );
+}
+function pdfDrawText(page,value,x,top,size,bold,color,align,spacing){
+  var text = String(value === undefined || value === null ? "" : value);
+  var actualX = x;
+  var width = pdfTextWidth(text,size,!!bold,spacing || 0);
+  if(align === "right") actualX -= width;
+  else if(align === "center") actualX -= width / 2;
+  page.commands.push(
+    "BT /" + (bold ? "F2" : "F1") + " " + size.toFixed(2) + " Tf " +
+    pdfHexColor(color || PDF_COLORS.ink) + " rg " +
+    (spacing ? spacing.toFixed(2) + " Tc " : "") +
+    "1 0 0 1 " + actualX.toFixed(2) + " " +
+    (page.height - top - size).toFixed(2) + " Tm " + pdfTextToken(text) + " Tj ET"
+  );
+  return width;
+}
+function pdfWrapLines(value,size,bold,maxWidth,spacing){
+  var paragraphs = String(value === undefined || value === null ? "" : value).split(/\r?\n/);
+  var lines = [];
+  paragraphs.forEach(function(paragraph){
+    var words = paragraph.replace(/\s+/g," ").trim().split(" ");
+    if(words.length === 1 && !words[0]){ lines.push(""); return; }
+    var line = "";
+    words.forEach(function(word){
+      var trial = line ? line + " " + word : word;
+      if(line && pdfTextWidth(trial,size,bold,spacing || 0) > maxWidth){
+        lines.push(line);
+        line = word;
+      } else {
+        line = trial;
+      }
+    });
+    if(line) lines.push(line);
+  });
+  return lines;
+}
+function pdfDrawWrapped(page,value,x,top,maxWidth,size,bold,color,lineHeight,maxLines){
+  var lines = pdfWrapLines(value,size,bold,maxWidth,0);
+  if(maxLines && lines.length > maxLines){
+    lines = lines.slice(0,maxLines);
+    var last = lines.length - 1;
+    while(lines[last] && pdfTextWidth(lines[last] + "\u2026",size,bold,0) > maxWidth){
+      lines[last] = lines[last].slice(0,-1);
+    }
+    lines[last] += "\u2026";
+  }
+  lines.forEach(function(line,index){
+    pdfDrawText(page,line,x,top + index * lineHeight,size,bold,color);
+  });
+  return lines.length * lineHeight;
+}
+function pdfImageCover(page,imageIndex,x,top,w,h,images){
+  var image = images[imageIndex];
+  if(!image) return;
+  var scale = Math.max(w / image.width,h / image.height);
+  var drawW = image.width * scale;
+  var drawH = image.height * scale;
+  var drawX = x + (w - drawW) / 2;
+  var targetY = page.height - top - h;
+  var drawY = targetY + (h - drawH) / 2;
+  pdfRememberImage(page,imageIndex);
+  page.commands.push(
+    "q " + x.toFixed(2) + " " + targetY.toFixed(2) + " " + w.toFixed(2) +
+    " " + h.toFixed(2) + " re W n " + drawW.toFixed(2) + " 0 0 " +
+    drawH.toFixed(2) + " " + drawX.toFixed(2) + " " + drawY.toFixed(2) +
+    " cm /Im" + (imageIndex + 1) + " Do Q"
+  );
+}
+
+/* Eight report primitives. All positions are measured from the page's top. */
+function pageBand(page,title,contextLabel){
+  pdfFillRect(page,0,0,page.width,56,PDF_COLORS.navy);
+  pdfDrawText(page,title,40,18,18,true,PDF_WHITE);
+  pdfDrawText(page,String(contextLabel || "").toUpperCase(),page.width-40,22,8,true,PDF_WHITE,"right",0.6);
+}
+function pageFooter(page,client,site,date,n,total){
+  var top = page.height - 31;
+  page.commands.push(
+    pdfHexColor(PDF_COLORS.card) + " RG 0.6 w 40 " +
+    (page.height-top).toFixed(2) + " m " + (page.width-40) + " " +
+    (page.height-top).toFixed(2) + " l S"
+  );
+  pdfDrawText(page,[client,site,date].filter(answered).join(" \u00b7 "),40,top+8,7.5,false,PDF_COLORS.muted);
+  pdfDrawText(page,"PAGE "+n+" OF "+total,page.width-40,top+8,7.5,true,PDF_COLORS.muted,"right",0.35);
+}
+function card(page,x,y,w,h){
+  pdfRoundedRect(page,x,y,w,h,6,PDF_COLORS.card);
+}
+function cardHeader(page,x,y,w,label){
+  pdfRoundedRect(page,x,y,w,24,6,PDF_COLORS.teal);
+  pdfFillRect(page,x,y+12,w,12,PDF_COLORS.teal);
+  pdfDrawText(page,String(label || "").toUpperCase(),x+10,y+7,8,true,PDF_WHITE,null,0.5);
+}
+function statTile(page,x,y,w,label,value,qualifier){
+  card(page,x,y,w,80);
+  pdfDrawText(page,String(label || "").toUpperCase(),x+10,y+10,8,true,PDF_COLORS.teal,null,0.35);
+  pdfDrawText(page,String(value || "\u2014"),x+10,y+26,22,true,PDF_COLORS.navy);
+  if(qualifier) pdfDrawText(page,qualifier,x+10,y+57,7.5,false,PDF_COLORS.muted);
+}
+function numberedCard(page,x,y,w,n,title,body){
+  var bodyLines = pdfWrapLines(body,9.5,false,w-64,0);
+  var h = Math.max(66,34 + bodyLines.length * 12);
+  card(page,x,y,w,h);
+  var cx = x + 24;
+  var cy = page.height - y - 25;
+  var r = 12;
+  var c = r * 0.55228475;
+  page.commands.push(
+    pdfHexColor(PDF_COLORS.teal) + " rg " +
+    (cx+r)+" "+cy+" m "+(cx+r)+" "+(cy+c)+" "+(cx+c)+" "+(cy+r)+" "+cx+" "+(cy+r)+" c "+
+    (cx-c)+" "+(cy+r)+" "+(cx-r)+" "+(cy+c)+" "+(cx-r)+" "+cy+" c "+
+    (cx-r)+" "+(cy-c)+" "+(cx-c)+" "+(cy-r)+" "+cx+" "+(cy-r)+" c "+
+    (cx+c)+" "+(cy-r)+" "+(cx+r)+" "+(cy-c)+" "+(cx+r)+" "+cy+" c f"
+  );
+  pdfDrawText(page,String(n),cx,y+17,10,true,PDF_WHITE,"center");
+  pdfDrawText(page,title,x+46,y+12,12,true,PDF_COLORS.navy);
+  pdfDrawWrapped(page,body,x+46,y+30,w-58,9.5,false,PDF_COLORS.ink,12);
+  return h;
+}
+function pdfTableRowLayout(row,w){
+  var labelW = Math.min(150,w * 0.46);
+  var labelLines = pdfWrapLines(row.label,7.5,true,labelW-14,0).slice(0,2);
+  var valueX = labelW + 8;
+  var valueLines = pdfWrapLines(row.value,8.5,false,w-valueX-7,0).slice(0,2);
+  return {
+    labelW:labelW,
+    valueX:valueX,
+    labelLines:labelLines,
+    valueLines:valueLines,
+    height:Math.max(18,Math.max(labelLines.length,valueLines.length) * 10 + 6)
+  };
+}
+function stripedTable(page,x,y,w,rows){
+  var top = y;
+  rows.forEach(function(row,index){
+    var layout = pdfTableRowLayout(row,w);
+    var rowH = layout.height;
+    if(index % 2 === 0) pdfFillRect(page,x,top,w,rowH,PDF_COLORS.card);
+    layout.labelLines.forEach(function(line,lineIndex){
+      pdfDrawText(page,line,x+7,top+5+lineIndex*10,7.5,true,PDF_COLORS.muted);
+    });
+    layout.valueLines.forEach(function(line,lineIndex){
+      pdfDrawText(page,line,x+layout.valueX,top+5+lineIndex*10,8.5,false,PDF_COLORS.ink);
+    });
+    top += rowH;
+  });
+  return top - y;
+}
+function reportRowsHeight(rows,start,end,w){
+  var height = 0;
+  for(var index=start;index<end;index++){
+    height += pdfTableRowLayout(rows[index],w).height;
+  }
+  return height;
+}
+function reportTakeTableColumns(rows,start,w,maxHeight){
+  var bestEnd = start;
+  var bestSplit = start;
+  var bestDifference = Infinity;
+  for(var end=start+1;end<=rows.length;end++){
+    var found = false;
+    var candidateSplit = start;
+    var candidateDifference = Infinity;
+    for(var split=start+1;split<=end;split++){
+      var leftHeight = reportRowsHeight(rows,start,split,w);
+      var rightHeight = reportRowsHeight(rows,split,end,w);
+      if(leftHeight > maxHeight || rightHeight > maxHeight) continue;
+      var difference = Math.abs(leftHeight-rightHeight);
+      if(difference < candidateDifference){
+        candidateDifference = difference;
+        candidateSplit = split;
+        found = true;
+      }
+    }
+    if(!found) break;
+    bestEnd = end;
+    bestSplit = candidateSplit;
+    bestDifference = candidateDifference;
+  }
+  return {
+    left:rows.slice(start,bestSplit),
+    right:rows.slice(bestSplit,bestEnd),
+    next:bestEnd,
+    height:Math.max(
+      reportRowsHeight(rows,start,bestSplit,w),
+      reportRowsHeight(rows,bestSplit,bestEnd,w)
+    ),
+    difference:bestDifference
+  };
+}
+function photoCard(page,x,y,w,ref,filename,caption,imageIndex,images,tall){
+  var h = tall ? 430 : 226;
+  var imageH = tall ? 350 : 158;
+  card(page,x,y,w,h);
+  pdfImageCover(page,imageIndex,x+8,y+8,w-16,imageH,images);
+  pdfDrawText(page,"PHOTO "+ref,x+10,y+imageH+18,9,true,PDF_COLORS.teal);
+  pdfDrawText(page,filename,x+w-10,y+imageH+19,7.5,true,PDF_COLORS.ink,"right");
+  pdfDrawWrapped(page,caption,x+10,y+imageH+36,w-20,8.5,false,PDF_COLORS.muted,11,2);
+}
+
+function reportBasis(data){
+  var atDisplay = num(data.lux_disp);
+  var measured = [atDisplay,num(data.lux_mid),num(data.lux_rear)].filter(function(value){
+    return value !== null;
+  });
+  if(atDisplay !== null){
+    return {value:atDisplay,label:"at display wall"};
+  }
+  if(measured.length){
+    return {value:Math.max.apply(null,measured),label:"highest measured"};
+  }
+  var preset = num(data.lux_preset);
+  return preset === null ? null : {value:preset,label:"estimated"};
+}
+function reportDimensionTiles(room){
+  var data = room.d || {};
+  var fields = [
+    {key:"len",label:"Length",suffix:" ft",qualifier:"overall"},
+    {key:"wid",label:"Width",suffix:" ft",qualifier:"overall"},
+    {key:"hgt",label:"Ceiling",suffix:" ft",qualifier:"to ceiling grid"},
+    {key:"seats",label:"Seats",suffix:"",qualifier:"occupancy"}
+  ];
+  return fields.filter(function(field){ return answered(data[field.key]); }).map(function(field){
+    return {
+      label:field.label,
+      value:disp(data[field.key]) + field.suffix,
+      qualifier:field.qualifier
+    };
+  });
+}
+function reportLightTiles(room){
+  var data = room.d || {};
+  var tiles = [];
+  [
+    {key:"lux_disp",label:"Display wall"},
+    {key:"lux_mid",label:"Mid seating"},
+    {key:"lux_rear",label:"Rear / windows"}
+  ].forEach(function(field){
+    if(answered(data[field.key])){
+      tiles.push({
+        label:field.label,
+        value:Math.round(num(data[field.key])) + " lux",
+        qualifier:"measured"
+      });
+    }
+  });
+  if(!tiles.length && answered(data.lux_preset)){
+    tiles.push({
+      label:"Ambient light",
+      value:"~" + Math.round(num(data.lux_preset)) + " lux",
+      qualifier:"estimated, no meter"
+    });
+  }
+  var basis = reportBasis(data);
+  if(basis){
+    var value;
+    if(data.disptype === "Projection"){
+      var lumens = recLumens(basis.value,num(data.scr_diag),num(data.scr_gain) || 1);
+      value = lumens ? lumens.toLocaleString() + " lm" : targetFL(basis.value) + " fL";
+    } else {
+      value = recNits(basis.value) + " nits";
+    }
+    tiles.push({
+      label:"Recommendation",
+      value:value,
+      qualifier:"from " + Math.round(basis.value) + " lux " + basis.label
+    });
+  }
+  return tiles.slice(0,4);
+}
+function reportFieldRows(room){
+  var data = room.d || {};
+  var omit = {
+    name:true,seats:true,len:true,wid:true,hgt:true,
+    lux_disp:true,lux_mid:true,lux_rear:true,lux_preset:true,
+    inv:true,reuse:true,remov:true,ctrl:true,lightctl:true,oper:true,
+    flags:true,open:true,gen:true
+  };
+  var rows = [];
+  [
+    {key:"lt_time",label:"Ambient light \u00b7 Time of day"},
+    {key:"lt_sky",label:"Ambient light \u00b7 Sky"},
+    {key:"lt_shade",label:"Ambient light \u00b7 Window treatment"},
+    {key:"lt_src",label:"Ambient light \u00b7 Light sources"},
+    {key:"disptype",label:"Ambient light \u00b7 Intended display"},
+    {key:"scr_diag",label:"Ambient light \u00b7 Screen diagonal"},
+    {key:"scr_gain",label:"Ambient light \u00b7 Screen gain"}
+  ].forEach(function(field){
+    if(answered(data[field.key])){
+      rows.push({label:field.label,value:disp(data[field.key])});
+    }
+  });
+  ROOM_SECTIONS.forEach(function(section){
+    if(section.special || section.id === "exist" || section.id === "notes") return;
+    section.fields.forEach(function(field){
+      if(omit[field.k] || !answered(data[field.k])) return;
+      var note = data[field.k + "_note"];
+      rows.push({
+        label:section.title + " \u00b7 " + field.l,
+        value:disp(data[field.k]) + (answered(note) ? " \u2014 " + disp(note) : "")
+      });
+    });
+  });
+  return rows;
+}
+function reportEquipmentColumns(room){
+  var data = room.d || {};
+  function collect(fields){
+    return fields.filter(function(field){ return answered(data[field.key]); }).map(function(field){
+      return {label:field.label,value:disp(data[field.key])};
+    });
+  }
+  return {
+    equipment:collect([
+      {key:"inv",label:"Inventory"},
+      {key:"reuse",label:"Reuse"},
+      {key:"remov",label:"Removal"}
+    ]),
+    control:collect([
+      {key:"ctrl",label:"Interface"},
+      {key:"lightctl",label:"Lighting control"},
+      {key:"oper",label:"Operator"}
+    ])
+  };
+}
+function reportOverviewItems(){
+  var items = [];
+  function add(title,value){
+    if(answered(value)) items.push({title:title,body:disp(value)});
+  }
+  add("Scope as understood on arrival",S.visit.scope);
+  add("Site logistics",S.log.lognote);
+  LOGISTICS.forEach(function(field){
+    if(S.log[field.k] === "issue"){
+      add(field.l,S.log[field.k+"_note"] || "Marked as an issue during the visit.");
+    }
+  });
+  S.rooms.forEach(function(room){
+    var name = (room.d && room.d.name) || ("Room " + room.id);
+    add(name + " \u00b7 Red flags",room.d.flags);
+    add(name + " \u00b7 Open questions",room.d.open);
+    add(name + " \u00b7 Notes",room.d.gen);
+    ROOM_SECTIONS.forEach(function(section){
+      section.fields.forEach(function(field){
+        if(room.d[field.k] === "issue"){
+          add(name + " \u00b7 " + field.l,
+            room.d[field.k+"_note"] || "Marked as an issue during the visit.");
+        }
+      });
+    });
+  });
+  return items;
+}
+function reportCoverImageIndex(manifest){
+  if(!manifest.length) return null;
+  var chosen = S.visit.coverPhotoId;
+  if(chosen){
+    for(var i=0;i<manifest.length;i++){
+      if(packageSource(manifest[i]) === chosen) return i;
+    }
+  }
+  return 0;
+}
+function reportDrawTileRow(page,tiles,top){
+  if(!tiles.length) return top;
+  var gap = 8;
+  var width = (532 - gap * (tiles.length - 1)) / tiles.length;
+  tiles.forEach(function(tile,index){
+    statTile(page,40 + index * (width + gap),top,width,tile.label,tile.value,tile.qualifier);
+  });
+  return top + 92;
+}
+function reportDrawInfoBlock(page,x,y,w,title,rows){
+  var h = 104;
+  card(page,x,y,w,h);
+  cardHeader(page,x,y,w,title);
+  if(!rows.length){
+    pdfDrawText(page,"None recorded",x+10,y+39,9.5,false,PDF_COLORS.muted);
+    return h;
+  }
+  rows.slice(0,3).forEach(function(row,index){
+    var text = row.label + ": " + row.value;
+    pdfDrawWrapped(page,text,x+10,y+35+index*21,w-20,9.5,false,PDF_COLORS.ink,11,2);
+  });
+  return h;
+}
+function buildReportDocument(manifest,images){
+  var portrait = {width:612,height:792};
+  var landscape = {width:792,height:612};
+  var pages = [];
+  var layout = {
+    coverImageIndex:reportCoverImageIndex(manifest),
+    tiles:[],
+    roomTiles:[],
+    photoCards:[]
+  };
+  var cover = pdfPage(portrait.width,portrait.height,"cover");
+  if(layout.coverImageIndex === null){
+    pdfFillRect(cover,0,0,cover.width,cover.height,PDF_COLORS.navy);
+  } else {
+    pdfImageCover(cover,layout.coverImageIndex,0,0,cover.width,452,images);
+    pdfFillRect(cover,0,452,cover.width,340,PDF_COLORS.navy);
+  }
+  var coverTop = layout.coverImageIndex === null ? 300 : 482;
+  pdfFillRect(cover,48,coverTop,60,3,PDF_COLORS.gold);
+  var clientLines = pdfWrapLines(S.visit.client || "Site visit",40,true,516,0).slice(0,2);
+  clientLines.forEach(function(line,index){
+    pdfDrawText(cover,line,48,coverTop+20+index*45,40,true,PDF_WHITE);
+  });
+  var metaTop = coverTop + 20 + clientLines.length * 45 + 8;
+  pdfDrawText(cover,"SITE VISIT REPORT",48,metaTop,16,true,PDF_WHITE,null,0.2);
+  pdfDrawText(cover,String(S.visit.surveyor || "PREPLOT").toUpperCase(),48,metaTop+34,8,true,PDF_COLORS.teal,null,0.8);
+  pdfDrawText(cover,S.visit.date || "",48,metaTop+51,9.5,false,PDF_WHITE);
+  pdfDrawText(cover,"Prepared from " + manifest.length + " photograph" + (manifest.length === 1 ? "" : "s"),48,metaTop+70,9.5,false,PDF_WHITE);
+  pages.push(cover);
+
+  var overview = reportOverviewItems();
+  var overviewPage = null;
+  var overviewY = 82;
+  overview.forEach(function(item,index){
+    var expected = Math.max(66,34 + pdfWrapLines(item.body,9.5,false,484,0).length * 12);
+    if(!overviewPage || overviewY + expected > 735){
+      overviewPage = pdfPage(portrait.width,portrait.height,"overview");
+      pageBand(overviewPage,"Visit overview","Decisions and field notes");
+      pages.push(overviewPage);
+      overviewY = 78;
+    }
+    overviewY += numberedCard(overviewPage,40,overviewY,532,index+1,item.title,item.body) + 10;
+  });
+
+  S.rooms.forEach(function(room){
+    var page = pdfPage(portrait.width,portrait.height,"room");
+    var roomName = (room.d && room.d.name) || ("Room " + room.id);
+    pageBand(page,"Room report","Field record");
+    pdfDrawText(page,roomName,40,76,24,true,PDF_COLORS.navy);
+    var y = 116;
+    var dimensionTiles = reportDimensionTiles(room);
+    var lightTiles = reportLightTiles(room);
+    layout.tiles = layout.tiles.concat(dimensionTiles).concat(lightTiles);
+    layout.roomTiles.push({
+      roomId:String(room.id),
+      dimensions:dimensionTiles.slice(),
+      light:lightTiles.slice()
+    });
+    y = reportDrawTileRow(page,dimensionTiles,y);
+    y = reportDrawTileRow(page,lightTiles,y);
+
+    var rows = reportFieldRows(room);
+    var tablePage = reportTakeTableColumns(rows,0,258,735-y-116);
+    if(tablePage.left.length) stripedTable(page,40,y,258,tablePage.left);
+    if(tablePage.right.length) stripedTable(page,314,y,258,tablePage.right);
+    if(tablePage.next) y += tablePage.height + 12;
+    var columns = reportEquipmentColumns(room);
+    reportDrawInfoBlock(page,40,y,258,"Existing equipment",columns.equipment);
+    reportDrawInfoBlock(page,314,y,258,"Control",columns.control);
+    pages.push(page);
+
+    while(tablePage.next < rows.length){
+      page = pdfPage(portrait.width,portrait.height,"room");
+      pageBand(page,"Room report","Field record - continued");
+      pdfDrawText(page,roomName+" \u00b7 continued",40,76,24,true,PDF_COLORS.navy);
+      y = 116;
+      tablePage = reportTakeTableColumns(rows,tablePage.next,258,735-y);
+      stripedTable(page,40,y,258,tablePage.left);
+      if(tablePage.right.length) stripedTable(page,314,y,258,tablePage.right);
+      pages.push(page);
+    }
+  });
+
+  for(var start=0,sheet=1;start<manifest.length;start+=6,sheet++){
+    var entries = manifest.slice(start,start+6);
+    var photoPage = pdfPage(landscape.width,landscape.height,"photos");
+    pageBand(photoPage,"Photographic record","Photographic record - sheet "+photoPad(sheet,2));
+    if(entries.length === 1){
+      var only = entries[0];
+      photoCard(photoPage,156,76,480,only.ref,only.filename,
+        only.roomName+" \u00b7 "+only.sectionLabel,start,images,true);
+      layout.photoCards.push({ref:only.ref,filename:only.filename,imageIndex:start});
+    } else {
+      var gap = 12;
+      var width = (728 - gap * 2) / 3;
+      entries.forEach(function(entry,index){
+        var x = 32 + (index % 3) * (width + gap);
+        var top = 72 + Math.floor(index / 3) * 238;
+        photoCard(photoPage,x,top,width,entry.ref,entry.filename,
+          entry.roomName+" \u00b7 "+entry.sectionLabel,start+index,images,false);
+        layout.photoCards.push({
+          ref:entry.ref,filename:entry.filename,imageIndex:start+index
+        });
+      });
+    }
+    pages.push(photoPage);
+  }
+
+  pages.forEach(function(page,index){
+    if(page.kind !== "cover"){
+      pageFooter(page,S.visit.client,S.visit.site,S.visit.date,index+1,pages.length);
+    }
+  });
+  return {
+    title:[
+      "Preplot",
+      S.visit.client || "Site visit",
+      S.visit.site || "",
+      S.visit.date || ""
+    ].filter(answered).join(" \u2014 "),
+    pages:pages,
+    images:images,
+    layout:layout
+  };
+}
+
+
+
 function disp(v){
   if(Array.isArray(v)) return v.join(", ");
   if(v === "ok") return "OK";
@@ -3821,94 +4641,135 @@ function disp(v){
   if(v === "na") return "N/A";
   return String(v);
 }
-function tableFor(scope, fields){
-  var rows = fields.map(function(f){
-    var v = getV(scope, f.k);
-    if(!answered(v)) return "";
-    var note = getV(scope, f.k + "_note");
-    return '<tr><td class="k">' + esc(f.l) + '</td><td class="v">' + esc(disp(v)) +
-           (answered(note) ? ' — ' + esc(note) : "") + '</td></tr>';
-  }).join("");
-  return rows ? '<table>' + rows + '</table>' : '';
-}
-function printPhotos(key){
-  var l = photoList(key);
-  if(!l.length) return "";
-  return '<div class="pg">' + l.map(function(p,index){
-    var source;
-    try { source = materializePhotoSource(key,index); }
-    catch(error){ return ""; }
-    return '<img src="' + esc(source.url) + '">';
-  }).join("") + '</div>';
-}
 
-function buildPrintNow(){
-  var h = "";
-  h += '<h1>AV Pre-Install Site Survey</h1>';
-  h += '<div class="meta">' + esc(S.visit.client || "—") + ' &middot; ' + esc(S.visit.site || "—") +
-       ' &middot; ' + esc(S.visit.date || "—") + ' &middot; Surveyor: ' + esc(S.visit.surveyor || "—") +
-       ' &middot; Prepared with Preplot</div>';
-  h += '<h2>Visit details</h2>' + tableFor("visit", VISIT);
-  if(!S.skipped["log|main"]){
-    var logT = tableFor("log", LOGISTICS), logP = printPhotos("log|main");
-    if(logT || logP) h += '<h2>Site logistics &amp; access</h2>' + logT + logP;
-  }
-
-  S.rooms.forEach(function(r){
-    h += '<div class="rm"><h2>' + esc(r.d.name || ("Room " + r.id)) + '</h2>';
-    ROOM_SECTIONS.forEach(function(s){
-      if(S.skipped[r.id + "|" + s.id]) return;
-      if(s.special === "light"){
-        var lf = [
-          {k:"lt_time",l:"Time of reading"},{k:"lt_sky",l:"Sky"},{k:"lt_shade",l:"Window treatment"},
-          {k:"lt_src",l:"Light sources"},{k:"lux_disp",l:"Lux at display wall"},{k:"lux_mid",l:"Lux mid seating"},
-          {k:"lux_rear",l:"Lux rear / window wall"},{k:"lux_preset",l:"Estimated lux (no meter)"},
-          {k:"disptype",l:"Intended display type"},{k:"scr_diag",l:"Diagonal (in)"},{k:"scr_gain",l:"Screen gain"}
-        ];
-        var tbl = tableFor(r.id, lf);
-        var lp = printPhotos(r.id + "|light");
-        if(tbl || lp){
-          h += '<h3>Ambient light</h3>' + tbl;
-          var tmp = document.createElement("div");
-          tmp.innerHTML = calcHTML(r.id);
-          var txt = tmp.textContent.replace(/\s+/g," ").trim();
-          if(txt && txt.indexOf("Enter a lux reading") === -1) h += '<div class="cal">' + esc(txt) + '</div>';
-          h += lp;
-        }
-      } else {
-        var t2 = tableFor(r.id, s.fields);
-        var p2 = printPhotos(r.id + "|" + s.id);
-        if(t2 || p2) h += '<h3>' + esc(s.title) + '</h3>' + t2 + p2;
-      }
-    });
-    h += '</div>';
+function pdfRenditionFromBlob(blob){
+  return new Promise(function(resolve,reject){
+    var reader = new FileReader();
+    var image = new Image();
+    image.onload = function(){
+      var sourceW = image.naturalWidth || image.width;
+      var sourceH = image.naturalHeight || image.height;
+      var scale = Math.min(1,600 / Math.max(sourceW,sourceH));
+      var width = Math.max(1,Math.round(sourceW * scale));
+      var height = Math.max(1,Math.round(sourceH * scale));
+      var canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      var context = canvas.getContext("2d");
+      context.drawImage(image,0,0,width,height);
+      image.removeAttribute("src");
+      canvas.toBlob(function(jpeg){
+        canvas.width = 1;
+        canvas.height = 1;
+        if(!jpeg){ reject(new Error("PDF rendition failed")); return; }
+        jpeg.arrayBuffer().then(function(buffer){
+          var bytes = new Uint8Array(buffer);
+          var dimensions = pdfJpegDimensions(bytes);
+          resolve({
+            bytes:bytes,
+            width:dimensions.width,
+            height:dimensions.height,
+            mime:"image/jpeg"
+          });
+        },reject);
+      },"image/jpeg",0.6);
+    };
+    image.onerror = function(){
+      reject(new Error("PDF photo could not be decoded"));
+    };
+    reader.onload = function(){ image.src = String(reader.result); };
+    reader.onerror = function(){ reject(reader.error || new Error("PDF photo could not be read")); };
+    try { reader.readAsDataURL(blob); }
+    catch(error){ reject(error); }
   });
-
-  document.getElementById("print").innerHTML = h;
-  setTimeout(function(){
-    /* Temporary: the generated-PDF writer replaces this print path and names
-       the File itself. Until then iOS derives the PDF filename from the title. */
-    var oldTitle = document.title;
-    document.title = "Preplot \u2014 " + (S.visit.client || "\u2014") +
-      " \u2014 " + (S.visit.site || "\u2014") +
-      " \u2014 " + (S.visit.date || "\u2014");
-    try { window.print(); }
-    catch(e){ toast("Printing blocked here — open the file in your browser"); }
-    finally { document.title = oldTitle; }
-  }, 120);
+}
+function preparePdfRenditions(manifest,sourceProvider,onProgress){
+  var images = [];
+  var index = 0;
+  function next(){
+    if(index >= manifest.length) return Promise.resolve(images);
+    var current = index;
+    if(onProgress) onProgress(current+1,manifest.length);
+    return Promise.resolve(sourceProvider(manifest[current],current)).then(function(source){
+      var blob = source && source.blob
+        ? source.blob
+        : new Blob([source.bytes],{type:source.mime || manifest[current].mime});
+      return pdfRenditionFromBlob(blob);
+    }).then(function(image){
+      images.push(image);
+      index++;
+      return new Promise(function(resolve){ setTimeout(resolve,0); }).then(next);
+    });
+  }
+  return next();
+}
+function assemblePdfReport(manifest,images){
+  var documentModel = buildReportDocument(manifest,images);
+  var bytes = pdfWriteDocument(documentModel);
+  var layout = documentModel.layout;
+  var renditionDimensions = images.map(function(image){
+    return {width:image.width,height:image.height,bytes:image.bytes.length};
+  });
+  var pages = documentModel.pages.map(function(page){
+    return {kind:page.kind,width:page.width,height:page.height};
+  });
+  documentModel.images = [];
+  images.length = 0;
+  return {
+    bytes:bytes,
+    layout:layout,
+    pages:pages,
+    renditionDimensions:renditionDimensions,
+    title:documentModel.title,
+    renditionsReleased:images.length === 0
+  };
+}
+function generatePdfReport(manifest,onProgress){
+  var list = manifest || photoManifest();
+  return preparePdfRenditions(list,function(entry){
+    return hydratePhotoSource(entry.key,entry.bucketIndex);
+  },onProgress).then(function(images){
+    return assemblePdfReport(list,images);
+  });
+}
+function downloadPdfReport(result){
+  var file = new File(
+    [result.bytes],
+    slug() + ".pdf",
+    {type:"application/pdf",lastModified:Date.now()}
+  );
+  var url = URL.createObjectURL(file);
+  var anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = file.name;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+  return file;
 }
 function buildPrint(){
+  var button = document.getElementById("pdf");
+  var old = button ? button.textContent : "PDF";
+  if(button){ button.disabled = true; button.textContent = "Preparing\u2026"; }
+  var storageCounts = photoStorageCounts();
+  if(storageCounts.missing){
+    if(button){ button.disabled = false; button.textContent = old; }
+    toast("PDF cannot be prepared because a photo is missing from device storage");
+    return Promise.resolve(false);
+  }
   var manifest;
   try { manifest = photoManifest(); }
-  catch(error){ toast("PDF could not be prepared"); return Promise.resolve(false); }
-  var chain = Promise.resolve();
-  manifest.forEach(function(entry){
-    chain = chain.then(function(){
-      return hydratePhotoSource(entry.key,entry.bucketIndex);
-    });
-  });
-  return chain.then(function(){
-    buildPrintNow();
+  catch(error){
+    if(button){ button.disabled = false; button.textContent = old; }
+    toast("PDF could not be prepared");
+    return Promise.resolve(false);
+  }
+  return generatePdfReport(manifest,function(done,total){
+    if(button) button.textContent = total ? (done + "/" + total) : "Preparing\u2026";
+  }).then(function(result){
+    downloadPdfReport(result);
+    toast("PDF download started");
     return true;
   }).catch(function(error){
     if(error && error.code === "PHOTO_MISSING"){
@@ -3917,6 +4778,9 @@ function buildPrint(){
       toast("PDF could not be prepared");
     }
     return false;
+  }).then(function(ok){
+    if(button){ button.disabled = false; button.textContent = old; }
+    return ok;
   });
 }
 
@@ -4137,6 +5001,17 @@ window.__avl = {
   photoPackageFile:function(){
     return preparedPhotoPackage && preparedPhotoPackage.file;
   },
+  photoPackageReportLayout:function(){
+    return preparedPhotoPackage && preparedPhotoPackage.reportLayout;
+  },
+  pdfJpegDimensions:pdfJpegDimensions,
+  pdfWriteDocument:pdfWriteDocument,
+  buildReportDocument:buildReportDocument,
+  preparePdfRenditions:preparePdfRenditions,
+  assemblePdfReport:assemblePdfReport,
+  generatePdfReport:generatePdfReport,
+  buildPrint:buildPrint,
+  PDF_COLORS:PDF_COLORS,
   appView:function(){ return currentAppView; },
   switchAppView:switchAppView,
   groupedPhotoManifest:groupedPhotoManifest,
