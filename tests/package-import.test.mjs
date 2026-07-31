@@ -341,3 +341,169 @@ test("a mid-import IndexedDB failure leaves current state intact and records its
     assert.deepEqual(result.orphans,result.records);
   });
 });
+
+/* --- guards that shipped without proof ---------------------------------- */
+
+test("ZIP layout guards reject overlapping entries and central-directory slack", async function(){
+  await withApp(async function(page){
+    var results = await page.evaluate(async function(){
+      function read16(b,at){ return b[at] | (b[at+1] << 8); }
+      function write32(b,at,value){
+        b[at] = value & 255;
+        b[at+1] = (value >>> 8) & 255;
+        b[at+2] = (value >>> 16) & 255;
+        b[at+3] = (value >>> 24) & 255;
+      }
+      function read(bytes){
+        try { window.__avl.zipReadStore(bytes); return ""; }
+        catch(error){ return error.message; }
+      }
+      async function pair(){
+        var blob = window.__avl.zipStore([
+          {name:"root/a.txt",bytes:new Uint8Array([1])},
+          {name:"root/b.txt",bytes:new Uint8Array([2])}
+        ]);
+        return new Uint8Array(await blob.arrayBuffer());
+      }
+
+      /* Entry A claims a length that swallows entry B while still ending
+         before the central directory: every header stays self-consistent. */
+      var overlap = await pair();
+      var nameLength = "root/a.txt".length;
+      var localB = 30 + nameLength + 1;
+      var centralAt = localB + 30 + nameLength + 1;
+      var span = centralAt - (30 + nameLength) - 1;
+      write32(overlap,18,span);
+      write32(overlap,22,span);
+      write32(overlap,centralAt+20,span);
+      write32(overlap,centralAt+24,span);
+
+      /* Padding inside the central directory: the EOCD stays arithmetically
+         consistent, but the parsed entries no longer fill the declared size. */
+      var source = await pair();
+      var endAt = source.length - 22;
+      var centralSize = source[endAt+12] | (source[endAt+13] << 8) |
+        (source[endAt+14] << 16) | (source[endAt+15] << 24);
+      var slack = new Uint8Array(source.length + 8);
+      slack.set(source.subarray(0,endAt),0);
+      slack.set(source.subarray(endAt),endAt + 8);
+      write32(slack,endAt + 8 + 12,centralSize + 8);
+
+      return {
+        overlapEntries:read16(overlap,overlap.length-22+10),
+        overlap:read(overlap),
+        slack:read(slack)
+      };
+    });
+    assert.equal(results.overlapEntries,2);
+    assert.match(results.overlap,/entries overlap/i);
+    assert.match(results.slack,/does not match its directory/i);
+  });
+});
+
+test("package manifest guards reject tampered size, order and stowaway photos", async function(){
+  await withApp(async function(page){
+    var built = await buildPackage(page);
+    var results = await page.evaluate(async function(input){
+      var original = new Uint8Array(input);
+      async function tampered(mode){
+        var archive = window.__avl.zipReadStore(original);
+        var jsonName = archive.root + "/data/survey-export.json";
+        var payload = JSON.parse(new TextDecoder().decode(archive.entries[jsonName].bytes));
+        var buckets = payload.data.photos;
+        var flat = [];
+        Object.keys(buckets).forEach(function(key){
+          buckets[key].forEach(function(item){ flat.push(item); });
+        });
+        var extra = [];
+        if(mode === "size") flat[0].bytes = flat[0].bytes + 1;
+        if(mode === "order") flat[0].ref = "003";
+        if(mode === "stowaway"){
+          extra.push({
+            name:archive.root + "/photos/999_STOWAWAY.jpg",
+            bytes:new Uint8Array([1,2,3])
+          });
+        }
+        var encoded = new TextEncoder().encode(JSON.stringify(payload));
+        var entries = archive.names.map(function(name){
+          if(name === jsonName) return {name:name, bytes:encoded};
+          return {name:name, bytes:archive.entries[name].bytes};
+        }).concat(extra);
+        var rebuilt = new Uint8Array(await window.__avl.zipStore(entries).arrayBuffer());
+        var ok = await window.__avl.applyPackageImport(rebuilt);
+        return {ok:ok, toast:document.getElementById("toast").textContent};
+      }
+      return {
+        size:await tampered("size"),
+        order:await tampered("order"),
+        stowaway:await tampered("stowaway"),
+        control:await tampered("none")
+      };
+    },built.bytes);
+    assert.equal(results.size.ok,false);
+    assert.match(results.size.toast,/size does not match its manifest/i);
+    assert.equal(results.order.ok,false);
+    assert.match(results.order.toast,/order is inconsistent/i);
+    assert.equal(results.stowaway.ok,false);
+    assert.match(results.stowaway.toast,/undeclared photo/i);
+    assert.equal(results.control.ok,true,"an untampered rebuild must still import");
+  });
+});
+
+test("a storage readback that disagrees with the package aborts the whole import", async function(){
+  await withApp(async function(page){
+    var built = await buildPackage(page);
+    var results = await page.evaluate(async function(input){
+      var original = new Uint8Array(input);
+      var realGet = window.AVLPhotoStore.get;
+      async function lie(mode){
+        await window.AVLPhotoStore.clear();
+        window.AVLPhotoStore.get = realGet;
+        window.__avl.applyImport(JSON.stringify({
+          visit:{client:"Survives a lying store"},
+          log:{},
+          rooms:[{id:3,d:{name:"Untouched"}}],
+          photos:{},
+          skipped:{},
+          ui:{}
+        }));
+        window.AVLPhotoStore.get = function(id){
+          return realGet(id).then(function(record){
+            if(!record) return record;
+            /* "swap" keeps every declared number right and corrupts only the
+               bytes; "dimensions" keeps the bytes exact and lies about the
+               geometry. Each mode is caught by exactly one guard. */
+            var payload = new Uint8Array(record.bytes);
+            payload[0] = 0x99;
+            return {
+              id:record.id,
+              mime:record.mime,
+              width:mode === "swap" ? record.width : record.width + 1,
+              height:record.height,
+              bytes:record.bytes,
+              createdAt:record.createdAt,
+              blob:mode === "swap" ? new Blob([payload],{type:record.mime}) : record.blob
+            };
+          });
+        };
+        var ok = await window.__avl.applyPackageImport(original);
+        var out = {
+          ok:ok,
+          client:window.__avl.S().visit.client,
+          toast:document.getElementById("toast").textContent,
+          orphans:window.__avl.orphanedPhotoIds().length
+        };
+        window.AVLPhotoStore.get = realGet;
+        return out;
+      }
+      return {swap:await lie("swap"), dimensions:await lie("dimensions")};
+    },built.bytes);
+    ["swap","dimensions"].forEach(function(mode){
+      var result = results[mode];
+      assert.equal(result.ok,false,mode + ": a store returning wrong bytes must not import");
+      assert.equal(result.client,"Survives a lying store",mode + ": state must survive");
+      assert.match(result.toast,/storage verification failed/i);
+      assert.ok(result.orphans > 0,mode + ": written photos must be recorded as orphans");
+    });
+  });
+});
