@@ -84,12 +84,13 @@ it works with no signal — the service worker caches everything on first load.
 - At the end of a visit, open **Data & storage** and choose
   **Prepare photo package**. The app builds one ZIP containing every stored
   survey photo under its handoff filename, compact survey JSON that references
-  those packaged photo files, and an Excel-friendly photo manifest.
+  those packaged photo files, an Excel-friendly photo manifest, and a designed
+  site-visit PDF with matching photo references.
   **Share package…** opens the device share
   sheet for Google Drive; **Download package instead** is always available.
   The app cannot verify either destination, so it tells you to confirm the file
   in Drive or Files and never claims that it was uploaded or saved.
-- **PDF** builds a print report — use *Share → Print → pinch out → Save as PDF*.
+- **PDF** builds and downloads the same designed report included in the ZIP.
 
 ### Ambient light
 
@@ -114,7 +115,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v16";  // bump this for every runtime change
+var CACHE = "avl-survey-v19";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -287,3 +288,9 @@ second view of the canonical photo manifest, not a second photo model: order,
 capture, recovery, deletion, the full-screen viewer, ZIP names, and later PDF
 references all continue to use the same buckets and coordinates. The selected
 view is deliberately session-only and never enters exports or backups.
+
+Version 1.13 replaces the browser print sheet with a real in-app PDF writer.
+The report uses portrait cover and room pages, landscape photographic-record
+sheets, explicit measurement qualifiers, and filenames matching the full photo
+copies in the ZIP. Report renditions are 600px JPEGs used only inside the PDF;
+the archive’s `photos/` files remain byte-identical to the stored survey images.

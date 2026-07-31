@@ -54,8 +54,9 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
     assert.equal(branding.heading,MANIFEST.name);
     assert.equal(branding.apple,MANIFEST.name);
     assert.equal(branding.subtitle,null,"the old header subtitle must be removed, not emptied");
-    assert.match(INDEX_SOURCE,/<h1>AV Pre-Install Site Survey<\/h1>/);
-    assert.match(INDEX_SOURCE,/Prepared with Preplot/);
+    assert.match(INDEX_SOURCE,/SITE VISIT REPORT/);
+    assert.doesNotMatch(INDEX_SOURCE,/<h1>AV Pre-Install Site Survey<\/h1>/);
+    assert.doesNotMatch(INDEX_SOURCE,/window\.print\(/);
 
     var migration = await page.evaluate(function(payload){
       return window.__avl.migrate(payload);

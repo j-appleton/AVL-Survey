@@ -496,30 +496,29 @@ test("a shifted index never resolves to the previous photo's Blob", async functi
   });
 });
 
-/* The print sheet is a photo consumer like any other. Under schema 3 there will
-   be no data URL to embed, so a regression here fails outright rather than
-   quietly shipping megabytes of base64 into the print DOM. */
-test("the print sheet renders photos through the seam rather than embedding data URLs", async function(){
-  await withApp(async function(page){
-    await page.addInitScript(function(){
-      window.__printCalls = 0;
-      window.print = function(){ window.__printCalls++; };
-    });
-  }, async function(page){
+/* The generated report is a photo consumer like the viewer and package. It
+   receives resident Blobs through the seam and releases its renditions after
+   assembly; the old print DOM and window.print path no longer exist. */
+test("the generated PDF consumes resident photos without reviving the print DOM", async function(){
+  await withApp(async function(){}, async function(page){
     await importPhotos(page,"Print seam");
-    await page.locator("#pdf").click();
-    await until(async function(){
-      return page.evaluate(function(){ return window.__printCalls > 0; });
-    });
-    var printed = await page.evaluate(function(){
-      var html = document.getElementById("print").innerHTML;
+    var before = await surveyStateSnapshot(page);
+    var printed = await page.evaluate(async function(){
+      var result = await window.__avl.generatePdfReport();
       return {
-        dataUrls:(html.match(/src="data:/g) || []).length,
-        blobUrls:(html.match(/src="blob:/g) || []).length
+        signature:String.fromCharCode.apply(null,result.bytes.slice(0,5)),
+        cards:result.layout.photoCards.length,
+        released:result.renditionsReleased,
+        printNode:document.getElementById("print"),
+        printFunction:String(window.__avl.buildPrint)
       };
     });
-    assert.equal(printed.dataUrls,0,"the print sheet must not embed data URLs");
-    assert.equal(printed.blobUrls,3,"every photo must print through an object URL");
+    assert.equal(printed.signature,"%PDF-");
+    assert.equal(printed.cards,3);
+    assert.equal(printed.released,true);
+    assert.equal(printed.printNode,null);
+    assert.doesNotMatch(printed.printFunction,/window\.print/);
+    assert.equal(await surveyStateSnapshot(page),before);
   });
 });
 

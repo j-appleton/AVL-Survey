@@ -15,12 +15,24 @@ import {
 
 var ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 var execFile = promisify(execFileCallback);
-var JPG_BYTES = Array.from({length:96},function(_,index){
-  return (index * 37) & 255;
-});
-var PNG_BYTES = [137,80,78,71,13,10,26,10,0,255,34,68,102,136,170,204,238];
+var JPG_BYTES = Array.from(Buffer.from(
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAGAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEoooryD9EP//Z",
+  "base64"
+));
+var PNG_BYTES = Array.from(Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAFElEQVR4nGM0j7/EgA0wYRWlkwQA058BdOXICOYAAAAASUVORK5CYII=",
+  "base64"
+));
 var JPG = "data:image/jpeg;base64," + Buffer.from(JPG_BYTES).toString("base64");
 var PNG = "data:image/png;base64," + Buffer.from(PNG_BYTES).toString("base64");
+var GREEN_BYTES = Array.from(Buffer.from(
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAkGBggGBQkIBwgKCQkKDRYODQwMDRoTFBAWHxwhIB8cHh4jJzIqIyUvJR4eKzssLzM1ODg4ISo9QTw2QTI3ODX/2wBDAQkKCg0LDRkODhk1JB4kNTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTX/wAARCAAGAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwBKKKK8g+IP/9k=",
+  "base64"
+));
+var BLUE_BYTES = Array.from(Buffer.from(
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAkGBggGBQkIBwgKCQkKDRYODQwMDRoTFBAWHxwhIB8cHh4jJzIqIyUvJR4eKzssLzM1ODg4ISo9QTw2QTI3ODX/2wBDAQkKCg0LDRkODhk1JB4kNTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTX/wAARCAAGAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAIRAxEAPwDmKKKK/RDwz//Z",
+  "base64"
+));
 
 function packageState(){
   return {
@@ -194,6 +206,7 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
         root + "/photos/" + manifest[1].filename,
         root + "/photos/" + manifest[2].filename,
         root + "/photos/" + manifest[3].filename,
+        root + "/" + root + ".pdf",
         root + "/data/survey-export.json",
         root + "/data/photo-manifest.csv"
       ]);
@@ -316,9 +329,9 @@ test("captured selection order reaches independently extracted ZIP photo order",
   };
   await withPackageApp({state:state}, async function(page){
     var sources = {
-      first:"data:image/jpeg;base64,AQ==",
-      second:"data:image/jpeg;base64,AgM=",
-      third:"data:image/jpeg;base64,BAUG"
+      first:"data:image/jpeg;base64," + Buffer.from(JPG_BYTES).toString("base64"),
+      second:"data:image/jpeg;base64," + Buffer.from(GREEN_BYTES).toString("base64"),
+      third:"data:image/png;base64," + Buffer.from(PNG_BYTES).toString("base64")
     };
     await page.evaluate(async function(input){
       var delays = {first:40,second:15,third:1};
@@ -345,18 +358,18 @@ test("captured selection order reaches independently extracted ZIP photo order",
       assert.deepEqual(listing.stdout.trim().split("\n").slice(0,3),[
         root + "/photos/001_R01_notes.jpg",
         root + "/photos/002_R01_notes.jpg",
-        root + "/photos/003_R01_notes.jpg"
+        root + "/photos/003_R01_notes.png"
       ]);
       assert.deepEqual(
         manifest.map(function(entry){ return entry.filename; }),
-        ["001_R01_notes.jpg","002_R01_notes.jpg","003_R01_notes.jpg"]
+        ["001_R01_notes.jpg","002_R01_notes.jpg","003_R01_notes.png"]
       );
       await execFile("/usr/bin/unzip",["-qq",archivePath,"-d",extracted]);
       for(var i=0;i<manifest.length;i++){
         var extractedPhoto = await readFile(
           join(extracted,root,"photos",manifest[i].filename)
         );
-        assert.deepEqual(Array.from(extractedPhoto),[[1],[2,3],[4,5,6]][i]);
+        assert.deepEqual(Array.from(extractedPhoto),[JPG_BYTES,GREEN_BYTES,PNG_BYTES][i]);
       }
     } finally {
       await rm(scratch,{recursive:true,force:true});
@@ -651,8 +664,8 @@ test("identity moving after photo reads is discarded by the post-preparation re-
         var source = String(window.__avl.preparePhotoPackage);
         return (source.match(/!photoPackageIsCurrent\(pkg\)/g) || []).length;
       }),
-      1,
-      "preparation must explicitly re-check identity after assembling the archive"
+      2,
+      "preparation must re-check identity after rendition work and final assembly"
     );
     var before = await surveyStateSnapshot(page);
     await page.evaluate(function(){
