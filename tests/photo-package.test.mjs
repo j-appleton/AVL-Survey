@@ -207,6 +207,7 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
         root + "/photos/" + manifest[2].filename,
         root + "/photos/" + manifest[3].filename,
         root + "/" + root + ".pdf",
+        root + "/" + root + ".html",
         root + "/data/survey-export.json",
         root + "/data/photo-manifest.csv"
       ]);

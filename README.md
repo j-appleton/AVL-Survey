@@ -1,6 +1,6 @@
-# Preplot
+# PrePlot
 
-Preplot is a pre-install AV site survey app. It runs entirely in the browser, works offline,
+PrePlot is a pre-install AV site survey app. It runs entirely in the browser, works offline,
 stores everything on your phone. No accounts or backend; data leaves the device
 only when you explicitly export or share it.
 
@@ -84,8 +84,9 @@ it works with no signal — the service worker caches everything on first load.
 - At the end of a visit, open **Data & storage** and choose
   **Prepare photo package**. The app builds one ZIP containing every stored
   survey photo under its handoff filename, compact survey JSON that references
-  those packaged photo files, an Excel-friendly photo manifest, and a designed
-  site-visit PDF with matching photo references.
+  those packaged photo files, an Excel-friendly photo manifest, a designed
+  site-visit PDF, and a searchable interactive HTML report whose thumbnails
+  open the matching full-resolution files from the adjacent `photos` folder.
   **Share package…** opens the device share
   sheet for Google Drive; **Download package instead** is always available.
   The app cannot verify either destination, so it tells you to confirm the file
@@ -115,7 +116,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v19";  // bump this for every runtime change
+var CACHE = "avl-survey-v20";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -165,6 +166,9 @@ The browser suites start the app on localhost and verify:
   every source byte and manifest filename in canonical order, carries compact
   survey JSON without a second base64 copy, and writes RFC-compatible CSV with
   a UTF-8 BOM
+- the interactive HTML report stays text-sized, escapes survey content, makes
+  no external requests, follows PDF/manifest photo order, and opens the exact
+  full-resolution file named on each card
 - package sharing passes the exact prepared ZIP to `canShare()` and `share()`
   inside the trusted tap, blocks overlaps, permits cancellation and retry, and
   never mutates the survey or makes an unverifiable success claim

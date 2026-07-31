@@ -48,8 +48,8 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
         subtitle:document.getElementById("hdsub")
       };
     });
-    assert.equal(MANIFEST.name,"Preplot");
-    assert.equal(MANIFEST.short_name,"Preplot");
+    assert.equal(MANIFEST.name,"PrePlot");
+    assert.equal(MANIFEST.short_name,"PrePlot");
     assert.equal(branding.title,MANIFEST.name);
     assert.equal(branding.heading,MANIFEST.name);
     assert.equal(branding.apple,MANIFEST.name);

@@ -11,7 +11,8 @@ var TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".webmanifest": "application/manifest+json; charset=utf-8",
-  ".png": "image/png"
+  ".png": "image/png",
+  ".svg": "image/svg+xml"
 };
 
 export function serve(root){
