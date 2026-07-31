@@ -126,3 +126,39 @@ test("the PDF renderer consumes the report model without reaching back into surv
     assert.doesNotMatch(title,/STATE CLIENT MUST NOT RENDER/);
   });
 });
+
+test("canonical ambient-light fields drive both the custom UI and report model", async function(){
+  await withApp(async function(page){
+    var result = await page.evaluate(function(){
+      var fields = window.__avl.LIGHT_FIELDS;
+      var time = fields.filter(function(field){ return field.k === "lt_time"; })[0];
+      var display = fields.filter(function(field){ return field.k === "lux_disp"; })[0];
+      time.l = "Canonical time label";
+      time.reportLabel = "Canonical report time";
+      display.reportTileLabel = "Canonical display tile";
+      window.__avl.S().rooms[0].d.lt_time = "10:30";
+      window.__avl.switchAppView("photos");
+      window.__avl.switchAppView("survey");
+      var model = window.__avl.buildReportModel(window.__avl.photoManifest());
+      return {
+        keys:fields.map(function(field){ return field.k; }),
+        ui:document.getElementById("app").textContent,
+        rows:model.rooms[0].rows,
+        stats:model.rooms[0].stats
+      };
+    });
+    assert.deepEqual(result.keys,[
+      "lt_time","lt_sky","lt_shade","lt_src","lux_disp","lux_mid",
+      "lux_rear","lux_preset","disptype","scr_diag","scr_gain"
+    ]);
+    assert.match(result.ui,/Canonical time label/);
+    assert.ok(result.rows.some(function(row){
+      return row.label === "Canonical report time" && row.value === "10:30";
+    }));
+    assert.ok(result.stats.some(function(tile){
+      return tile.label === "Canonical display tile" &&
+        tile.value === "210 lux" &&
+        tile.qualifier === "measured";
+    }));
+  });
+});
