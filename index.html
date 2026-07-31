@@ -4483,6 +4483,59 @@ function reportCoverImageIndex(manifest){
   }
   return 0;
 }
+function buildReportModel(manifest){
+  var list = manifest || photoManifest();
+  var rooms = S.rooms.map(function(room){
+    var dimensions = reportDimensionTiles(room).map(function(tile){
+      return {
+        label:tile.label,
+        value:tile.value,
+        qualifier:tile.qualifier,
+        group:"dimensions"
+      };
+    });
+    var light = reportLightTiles(room).map(function(tile){
+      return {
+        label:tile.label,
+        value:tile.value,
+        qualifier:tile.qualifier,
+        group:"light"
+      };
+    });
+    var columns = reportEquipmentColumns(room);
+    return {
+      id:String(room.id),
+      title:(room.d && room.d.name) || ("Room " + room.id),
+      stats:dimensions.concat(light),
+      rows:reportFieldRows(room),
+      cards:[
+        {header:"Existing equipment",bullets:columns.equipment},
+        {header:"Control",bullets:columns.control}
+      ]
+    };
+  });
+  return {
+    cover:{
+      client:String(S.visit.client || ""),
+      site:String(S.visit.site || ""),
+      date:String(S.visit.date || ""),
+      surveyor:String(S.visit.surveyor || ""),
+      photoCount:list.length,
+      coverPhoto:reportCoverImageIndex(list)
+    },
+    overview:reportOverviewItems(),
+    rooms:rooms,
+    photos:list.map(function(entry){
+      return {
+        ref:entry.ref,
+        filename:entry.filename,
+        caption:entry.roomName + " \u00b7 " + entry.sectionLabel,
+        roomName:entry.roomName,
+        sectionLabel:entry.sectionLabel
+      };
+    })
+  };
+}
 function reportDrawTileRow(page,tiles,top){
   if(!tiles.length) return top;
   var gap = 8;
@@ -4506,12 +4559,12 @@ function reportDrawInfoBlock(page,x,y,w,title,rows){
   });
   return h;
 }
-function buildReportDocument(manifest,images){
+function buildReportDocument(report,images){
   var portrait = {width:612,height:792};
   var landscape = {width:792,height:612};
   var pages = [];
   var layout = {
-    coverImageIndex:reportCoverImageIndex(manifest),
+    coverImageIndex:report.cover.coverPhoto,
     tiles:[],
     roomTiles:[],
     photoCards:[]
@@ -4525,21 +4578,20 @@ function buildReportDocument(manifest,images){
   }
   var coverTop = layout.coverImageIndex === null ? 300 : 482;
   pdfFillRect(cover,48,coverTop,60,3,PDF_COLORS.gold);
-  var clientLines = pdfWrapLines(S.visit.client || "Site visit",40,true,516,0).slice(0,2);
+  var clientLines = pdfWrapLines(report.cover.client || "Site visit",40,true,516,0).slice(0,2);
   clientLines.forEach(function(line,index){
     pdfDrawText(cover,line,48,coverTop+20+index*45,40,true,PDF_WHITE);
   });
   var metaTop = coverTop + 20 + clientLines.length * 45 + 8;
   pdfDrawText(cover,"SITE VISIT REPORT",48,metaTop,16,true,PDF_WHITE,null,0.2);
-  pdfDrawText(cover,String(S.visit.surveyor || "PREPLOT").toUpperCase(),48,metaTop+34,8,true,PDF_COLORS.teal,null,0.8);
-  pdfDrawText(cover,S.visit.date || "",48,metaTop+51,9.5,false,PDF_WHITE);
-  pdfDrawText(cover,"Prepared from " + manifest.length + " photograph" + (manifest.length === 1 ? "" : "s"),48,metaTop+70,9.5,false,PDF_WHITE);
+  pdfDrawText(cover,String(report.cover.surveyor || "PREPLOT").toUpperCase(),48,metaTop+34,8,true,PDF_COLORS.teal,null,0.8);
+  pdfDrawText(cover,report.cover.date || "",48,metaTop+51,9.5,false,PDF_WHITE);
+  pdfDrawText(cover,"Prepared from " + report.cover.photoCount + " photograph" + (report.cover.photoCount === 1 ? "" : "s"),48,metaTop+70,9.5,false,PDF_WHITE);
   pages.push(cover);
 
-  var overview = reportOverviewItems();
   var overviewPage = null;
   var overviewY = 82;
-  overview.forEach(function(item,index){
+  report.overview.forEach(function(item,index){
     var expected = Math.max(66,34 + pdfWrapLines(item.body,9.5,false,484,0).length * 12);
     if(!overviewPage || overviewY + expected > 735){
       overviewPage = pdfPage(portrait.width,portrait.height,"overview");
@@ -4550,14 +4602,14 @@ function buildReportDocument(manifest,images){
     overviewY += numberedCard(overviewPage,40,overviewY,532,index+1,item.title,item.body) + 10;
   });
 
-  S.rooms.forEach(function(room){
+  report.rooms.forEach(function(room){
     var page = pdfPage(portrait.width,portrait.height,"room");
-    var roomName = (room.d && room.d.name) || ("Room " + room.id);
+    var roomName = room.title;
     pageBand(page,"Room report","Field record");
     pdfDrawText(page,roomName,40,76,24,true,PDF_COLORS.navy);
     var y = 116;
-    var dimensionTiles = reportDimensionTiles(room);
-    var lightTiles = reportLightTiles(room);
+    var dimensionTiles = room.stats.filter(function(tile){ return tile.group === "dimensions"; });
+    var lightTiles = room.stats.filter(function(tile){ return tile.group === "light"; });
     layout.tiles = layout.tiles.concat(dimensionTiles).concat(lightTiles);
     layout.roomTiles.push({
       roomId:String(room.id),
@@ -4567,14 +4619,13 @@ function buildReportDocument(manifest,images){
     y = reportDrawTileRow(page,dimensionTiles,y);
     y = reportDrawTileRow(page,lightTiles,y);
 
-    var rows = reportFieldRows(room);
+    var rows = room.rows;
     var tablePage = reportTakeTableColumns(rows,0,258,735-y-116);
     if(tablePage.left.length) stripedTable(page,40,y,258,tablePage.left);
     if(tablePage.right.length) stripedTable(page,314,y,258,tablePage.right);
     if(tablePage.next) y += tablePage.height + 12;
-    var columns = reportEquipmentColumns(room);
-    reportDrawInfoBlock(page,40,y,258,"Existing equipment",columns.equipment);
-    reportDrawInfoBlock(page,314,y,258,"Control",columns.control);
+    reportDrawInfoBlock(page,40,y,258,room.cards[0].header,room.cards[0].bullets);
+    reportDrawInfoBlock(page,314,y,258,room.cards[1].header,room.cards[1].bullets);
     pages.push(page);
 
     while(tablePage.next < rows.length){
@@ -4589,14 +4640,14 @@ function buildReportDocument(manifest,images){
     }
   });
 
-  for(var start=0,sheet=1;start<manifest.length;start+=6,sheet++){
-    var entries = manifest.slice(start,start+6);
+  for(var start=0,sheet=1;start<report.photos.length;start+=6,sheet++){
+    var entries = report.photos.slice(start,start+6);
     var photoPage = pdfPage(landscape.width,landscape.height,"photos");
     pageBand(photoPage,"Photographic record","Photographic record - sheet "+photoPad(sheet,2));
     if(entries.length === 1){
       var only = entries[0];
       photoCard(photoPage,156,76,480,only.ref,only.filename,
-        only.roomName+" \u00b7 "+only.sectionLabel,start,images,true);
+        only.caption,start,images,true);
       layout.photoCards.push({ref:only.ref,filename:only.filename,imageIndex:start});
     } else {
       var gap = 12;
@@ -4605,7 +4656,7 @@ function buildReportDocument(manifest,images){
         var x = 32 + (index % 3) * (width + gap);
         var top = 72 + Math.floor(index / 3) * 238;
         photoCard(photoPage,x,top,width,entry.ref,entry.filename,
-          entry.roomName+" \u00b7 "+entry.sectionLabel,start+index,images,false);
+          entry.caption,start+index,images,false);
         layout.photoCards.push({
           ref:entry.ref,filename:entry.filename,imageIndex:start+index
         });
@@ -4616,15 +4667,15 @@ function buildReportDocument(manifest,images){
 
   pages.forEach(function(page,index){
     if(page.kind !== "cover"){
-      pageFooter(page,S.visit.client,S.visit.site,S.visit.date,index+1,pages.length);
+      pageFooter(page,report.cover.client,report.cover.site,report.cover.date,index+1,pages.length);
     }
   });
   return {
     title:[
       "Preplot",
-      S.visit.client || "Site visit",
-      S.visit.site || "",
-      S.visit.date || ""
+      report.cover.client || "Site visit",
+      report.cover.site || "",
+      report.cover.date || ""
     ].filter(answered).join(" \u2014 "),
     pages:pages,
     images:images,
@@ -4703,8 +4754,8 @@ function preparePdfRenditions(manifest,sourceProvider,onProgress){
   }
   return next();
 }
-function assemblePdfReport(manifest,images){
-  var documentModel = buildReportDocument(manifest,images);
+function assemblePdfReportModel(reportModel,images){
+  var documentModel = buildReportDocument(reportModel,images);
   var bytes = pdfWriteDocument(documentModel);
   var layout = documentModel.layout;
   var renditionDimensions = images.map(function(image){
@@ -4723,6 +4774,9 @@ function assemblePdfReport(manifest,images){
     title:documentModel.title,
     renditionsReleased:images.length === 0
   };
+}
+function assemblePdfReport(manifest,images){
+  return assemblePdfReportModel(buildReportModel(manifest),images);
 }
 function generatePdfReport(manifest,onProgress){
   var list = manifest || photoManifest();
@@ -5006,8 +5060,10 @@ window.__avl = {
   },
   pdfJpegDimensions:pdfJpegDimensions,
   pdfWriteDocument:pdfWriteDocument,
+  buildReportModel:buildReportModel,
   buildReportDocument:buildReportDocument,
   preparePdfRenditions:preparePdfRenditions,
+  assemblePdfReportModel:assemblePdfReportModel,
   assemblePdfReport:assemblePdfReport,
   generatePdfReport:generatePdfReport,
   buildPrint:buildPrint,
