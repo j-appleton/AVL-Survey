@@ -106,7 +106,7 @@ test("the PDF renderer consumes the report model without reaching back into surv
     },JPG_BYTES);
     assert.deepEqual(
       Object.keys(result.model),
-      ["cover","overview","rooms","photos"]
+      ["summary","cover","overview","rooms","photos"]
     );
     assert.deepEqual(
       Object.keys(result.model.rooms[0]).sort(),

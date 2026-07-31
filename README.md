@@ -21,10 +21,11 @@ GitHub Pages is free and takes about five minutes.
    - Set it to **Public** (Pages requires this on free accounts)
    - Tick **Add a README file**, then **Create repository**
 2. In the new repo click **Add file** → **Upload files**.
-3. Upload **all nine files** from this bundle:
+3. Upload **all ten files** from this bundle:
    - `index.html`
    - `photo-store.js`
    - `photo-captions.js`
+   - `compose.js`
    - `sw.js`
    - `manifest.webmanifest`
    - `icon-192.png`
@@ -76,6 +77,10 @@ it works with no signal — the service worker caches everything on first load.
 - The top of the Photos tab makes the report cover an explicit decision. Choose
   a photo there or from the full-screen viewer; without one, the PDF uses a
   deliberate plain navy cover rather than silently taking the first photo.
+- **Compose** is the laptop-friendly handoff workspace: refine captions, choose
+  the cover, write a short executive summary, exclude weak photos from the PDF
+  and HTML report without deleting them from the archive, and preview both real
+  report files before rebuilding the package.
 - After capture, the app stays in the survey and reports the batch once. Tap any
   thumbnail when you want the full viewer, then tap **Save photo…** to open the
   device share sheet and choose **Save Image** on iPhone or **Photos / Gallery**
@@ -101,6 +106,8 @@ it works with no signal — the service worker caches everything on first load.
   The app cannot verify either destination, so it tells you to confirm the file
   in Drive or Files and never claims that it was uploaded or saved. This ZIP is
   the app's only outward report or backup handoff.
+  Rebuilding currently creates another ZIP rather than replacing an earlier
+  Drive upload, so confirm which copy is current.
 
 ### Ambient light
 
@@ -125,7 +132,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v25";  // bump this for every runtime change
+var CACHE = "avl-survey-v26";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -138,14 +145,14 @@ from v1 to v2 may therefore require fully closing and reopening the installed
 app once. Updates after v2 use the in-app notice.
 
 The PWA still has no build step. `package.json`, `tests/`, and `.github/` support
-automated testing only and are not required when uploading the nine runtime
+automated testing only and are not required when uploading the ten runtime
 files from an iPhone.
 
 ## Tests
 
 The browser suites start the app on localhost and verify:
 
-- legacy data migrates to schema v4 and saves in a versioned envelope without
+- legacy data migrates to schema v5 and saves in a versioned envelope without
   replacing its existing metadata
 - damaged, foreign, and newer-schema imports cannot replace valid work
 - import and clear snapshots can be restored, and restore is itself undoable
@@ -327,3 +334,9 @@ are keyed to stable stored-photo IDs, survive complete-package export and import
 when fresh IDs are assigned, and appear consistently in the PDF, HTML report,
 photo manifest, and CRM note. Legacy inline photos remain deliberately
 uncaptioned until they are migrated to device storage.
+
+Version 1.18 adds Compose as the post-visit workspace. Schema v5 stores a short
+executive summary and stable-ID report exclusions; exclusions never renumber the
+manifest or remove originals from the archive. PDF and HTML previews use the
+real report builders, package imports remap exclusions to fresh photo IDs, and
+orphan caption/exclusion keys are repaired instead of blocking the survey.

@@ -112,7 +112,7 @@ test("a photo batch preserves selection order, renders once and reports once", a
     assert.equal(result.toast,"4 photos added.");
     assert.equal(result.viewer,false);
     assert.equal(result.thumbnails,0,"capture must not put photo controls back in the Survey view");
-    assert.equal(result.schema,4);
+    assert.equal(result.schema,5);
   });
 });
 
