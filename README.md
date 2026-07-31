@@ -21,9 +21,10 @@ GitHub Pages is free and takes about five minutes.
    - Set it to **Public** (Pages requires this on free accounts)
    - Tick **Add a README file**, then **Create repository**
 2. In the new repo click **Add file** → **Upload files**.
-3. Upload **all eight files** from this bundle:
+3. Upload **all nine files** from this bundle:
    - `index.html`
    - `photo-store.js`
+   - `photo-captions.js`
    - `sw.js`
    - `manifest.webmanifest`
    - `icon-192.png`
@@ -124,7 +125,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v24";  // bump this for every runtime change
+var CACHE = "avl-survey-v25";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -137,14 +138,14 @@ from v1 to v2 may therefore require fully closing and reopening the installed
 app once. Updates after v2 use the in-app notice.
 
 The PWA still has no build step. `package.json`, `tests/`, and `.github/` support
-automated testing only and are not required when uploading the eight runtime
+automated testing only and are not required when uploading the nine runtime
 files from an iPhone.
 
 ## Tests
 
 The browser suites start the app on localhost and verify:
 
-- legacy data migrates to schema v3 and saves in a versioned envelope without
+- legacy data migrates to schema v4 and saves in a versioned envelope without
   replacing its existing metadata
 - damaged, foreign, and newer-schema imports cannot replace valid work
 - import and clear snapshots can be restored, and restore is itself undoable
@@ -165,7 +166,7 @@ The browser suites start the app on localhost and verify:
   open the viewer automatically; a simulated storage-full failure remains
   persistently visible and shareable for the current session
 - new captures store byte-exact photos in IndexedDB under unique stable IDs and
-  persist only verified descriptors in schema v3; failed storage falls back to
+  persist only verified descriptors; failed storage falls back to
   inline survey photos without interrupting capture
 - the derived photo manifest includes every photo exactly once in stable site,
   room, section, and bucket order; filenames use global references, visible room
@@ -320,3 +321,9 @@ Version 1.16 makes the package the only outward handoff, moves all photo work to
 the Photos tab, and requires an explicit report-cover choice. Each package also
 contains a CRLF, UTF-8 plain-text CRM note with every canonical field, including
 blank answers, while skipped sections remain visibly marked not applicable.
+
+Version 1.17 adds optional one-line photo captions in the Photos tab. Captions
+are keyed to stable stored-photo IDs, survive complete-package export and import
+when fresh IDs are assigned, and appear consistently in the PDF, HTML report,
+photo manifest, and CRM note. Legacy inline photos remain deliberately
+uncaptioned until they are migrated to device storage.

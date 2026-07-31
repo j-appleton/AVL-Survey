@@ -128,6 +128,14 @@ button.btn:active{transform:translateY(1px)}
 /* photos */
 .photos{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .photoitem{position:relative;width:76px;height:76px;flex:0 0 76px}
+.photoitem.captioned{width:100%;max-width:320px;flex:1 1 260px}
+.photoitem.captioned .phdel{left:52px;right:auto}
+.photo-caption{
+  position:absolute;left:84px;right:0;top:18px;display:block;width:calc(100% - 84px);
+  padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);
+  color:var(--ink);font:inherit;font-size:13px
+}
+.photo-caption:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
 .ph{
   display:block;position:relative;width:76px;height:76px;padding:0;border-radius:9px;overflow:hidden;
   border:1px solid var(--line);background:var(--card);cursor:zoom-in;color:inherit
@@ -323,6 +331,7 @@ button.btn:active{transform:translateY(1px)}
 <input type="file" id="jsonin" accept="application/zip,.zip,application/json,.json" hidden>
 
 <script src="./photo-store.js"></script>
+<script src="./photo-captions.js"></script>
 <script>
 "use strict";
 
@@ -345,8 +354,8 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.16.1";
-var SCHEMA = 3;
+var APP_VERSION = "1.17.0";
+var SCHEMA = 4;
 
 /* ============================================================
    SCHEMA
@@ -569,7 +578,7 @@ function minDiag(farFt, analytical){
 function nowISO(){ try { return new Date().toISOString(); } catch(e){ return ""; } }
 function blankState(){
   return {
-    visit:{}, log:{}, rooms:[], photos:{}, skipped:{}, ui:{},
+    visit:{}, log:{}, rooms:[], photos:{}, captions:{}, skipped:{}, ui:{},
     meta:{created:nowISO(), updated:nowISO(), app:APP_VERSION}
   };
 }
@@ -586,6 +595,10 @@ var MIGRATIONS = {
   2: function(d){
     d.meta = d.meta || {};
     if(typeof d.meta.migratedFrom === "undefined") d.meta.migratedFrom = 2;
+    return d;
+  },
+  3: function(d){
+    d.captions = {};
     return d;
   }
 };
@@ -639,7 +652,7 @@ function validate(d){
   });
   if(bad) return {ok:false, reason:bad};
 
-  var objs = ["visit","log","photos","skipped","ui"];
+  var objs = ["visit","log","photos","captions","skipped","ui"];
   for(var i=0;i<objs.length;i++){
     var v = d[objs[i]];
     if(typeof v !== "undefined" && (v === null || typeof v !== "object" || Array.isArray(v))){
@@ -661,6 +674,11 @@ function validate(d){
       }
     }
   }
+  if(!window.PrePlotCaptions){
+    return {ok:false, reason:"photo caption support is unavailable"};
+  }
+  var captionReason = window.PrePlotCaptions.validate(d.captions,photoIds);
+  if(captionReason) return {ok:false, reason:captionReason};
   return {ok:true};
 }
 
@@ -672,6 +690,7 @@ function coerce(d){
     log:d.log || b.log,
     rooms:d.rooms || b.rooms,
     photos:d.photos || b.photos,
+    captions:d.captions || b.captions,
     skipped:d.skipped || b.skipped,
     ui:d.ui || b.ui,
     meta:d.meta || b.meta
@@ -768,7 +787,7 @@ function portablePhotoEntry(key, index){
   if(!isPhotoDescriptor(entry)) return Promise.reject(new Error("Photo entry is malformed"));
   return hydratePhotoSource(key,index).then(function(source){
     return blobToDataUrl(source.blob).then(function(data){
-      return {
+      var portable = {
         mime:entry.mime,
         width:entry.width,
         height:entry.height,
@@ -776,6 +795,9 @@ function portablePhotoEntry(key, index){
         data:data,
         cover:selected
       };
+      var caption = photoCaption(entry);
+      if(caption) portable.caption = caption;
+      return portable;
     });
   });
 }
@@ -787,6 +809,7 @@ function portableEnvelope(){
     log:S.log,
     rooms:S.rooms,
     photos:{},
+    captions:{},
     skipped:S.skipped,
     ui:S.ui,
     meta:S.meta
@@ -806,7 +829,7 @@ function portableEnvelope(){
   return chain.then(function(){
     return {
       app:"avl-survey",
-      schema:3,
+      schema:SCHEMA,
       photoFormat:"inline",
       appVersion:APP_VERSION,
       exportedAt:nowISO(),
@@ -1254,6 +1277,15 @@ function photoEntryBytes(entry){
 function photoEntryIdentity(entry){
   return isPhotoDescriptor(entry) ? entry.id : entry;
 }
+function photoCaption(entry){
+  return window.PrePlotCaptions.get(S,entry);
+}
+function setPhotoCaption(entry,value){
+  return window.PrePlotCaptions.set(S,entry,value);
+}
+function removePhotoCaption(entry){
+  return window.PrePlotCaptions.remove(S,entry);
+}
 function photoPad(value, width){
   var out = String(value);
   while(out.length < width) out = "0" + out;
@@ -1321,7 +1353,8 @@ function photoManifest(){
         sectionId:sectionId,
         sectionLabel:sectionLabel,
         mime:mime,
-        bytes:photoEntryBytes(source)
+        bytes:photoEntryBytes(source),
+        caption:photoCaption(source)
       });
     });
   }
@@ -1949,7 +1982,7 @@ function csvCell(value){
 function photoManifestCSV(manifest){
   var fields = [
     "ref","filename","key","bucketIndex","roomLabel",
-    "roomName","sectionId","sectionLabel","mime"
+    "roomName","sectionId","sectionLabel","mime","caption"
   ];
   var lines = [fields.join(",")];
   manifest.forEach(function(entry){
@@ -1988,10 +2021,35 @@ function crmNoteSection(lines,title,bagValue,fields,skipped){
   }
   lines.push("");
 }
+function crmPhotoCaptionLines(lines,key,manifest){
+  var captions = [];
+  manifest.forEach(function(entry){
+    if(entry.key !== key || !entry.caption) return;
+    captions.push("Photo " + entry.ref + ": " + entry.caption);
+  });
+  if(!captions.length) return;
+  if(lines[lines.length - 1] === "") lines.pop();
+  Array.prototype.push.apply(lines,captions);
+  lines.push("");
+}
+function crmOtherPhotoCaptionSections(lines,manifest,filter){
+  var seen = {};
+  manifest.forEach(function(entry){
+    if(!entry.caption || !filter(entry) || seen[entry.key]) return;
+    seen[entry.key] = true;
+    lines.push(String(entry.sectionLabel || "Photos").toUpperCase());
+    crmPhotoCaptionLines(lines,entry.key,manifest);
+  });
+}
 function crmNoteText(){
   var lines = [];
+  var manifest = photoManifest();
   crmNoteSection(lines,"Client / visit",S.visit,VISIT,false);
   crmNoteSection(lines,"Site logistics & access",S.log,LOGISTICS,!!S.skipped["log|main"]);
+  crmPhotoCaptionLines(lines,"log|main",manifest);
+  crmOtherPhotoCaptionSections(lines,manifest,function(entry){
+    return !entry.roomId && entry.key !== "log|main";
+  });
   S.rooms.forEach(function(room,index){
     var name = (room.d && room.d.name) || ("Room " + room.id);
     lines.push("ROOM " + ("0" + (index + 1)).slice(-2) + " — " + name);
@@ -2005,6 +2063,14 @@ function crmNoteText(){
         fields,
         !!S.skipped[room.id + "|" + section.id]
       );
+      var sectionKey = room.id + "|" + section.id;
+      crmPhotoCaptionLines(lines,sectionKey,manifest);
+    });
+    crmOtherPhotoCaptionSections(lines,manifest,function(entry){
+      if(String(entry.roomId) !== String(room.id)) return false;
+      return !ROOM_SECTIONS.some(function(section){
+        return entry.sectionId === section.id;
+      });
     });
   });
   while(lines.length && lines[lines.length - 1] === "") lines.pop();
@@ -2020,7 +2086,8 @@ function packageHead(){
       visit:S.visit,
       log:S.log,
       rooms:S.rooms,
-      skipped:S.skipped
+      skipped:S.skipped,
+      captions:S.captions
     })
   };
 }
@@ -2038,6 +2105,7 @@ function packageEnvelope(manifest){
     log:S.log,
     rooms:S.rooms,
     photos:{},
+    captions:{},
     skipped:S.skipped,
     ui:S.ui,
     meta:S.meta
@@ -2048,7 +2116,7 @@ function packageEnvelope(manifest){
   });
   manifest.forEach(function(entry){
     var source = photoValue(entry.key,entry.bucketIndex);
-    data.photos[entry.key].push({
+    var item = {
       ref:entry.ref,
       filename:entry.filename,
       path:"photos/" + entry.filename,
@@ -2056,7 +2124,9 @@ function packageEnvelope(manifest){
       bytes:entry.bytes,
       width:isPhotoDescriptor(source) ? source.width : 0,
       height:isPhotoDescriptor(source) ? source.height : 0
-    });
+    };
+    if(entry.caption) item.caption = entry.caption;
+    data.photos[entry.key].push(item);
   });
   return {
     app:"avl-survey",
@@ -2125,7 +2195,7 @@ function photoPackageIsCurrent(pkg){
   }
   var fields = [
     "ref","filename","key","bucketIndex","roomName",
-    "sectionLabel","mime","bytes"
+    "sectionLabel","mime","bytes","caption"
   ];
   for(var i=0;i<current.length;i++){
     for(var j=0;j<fields.length;j++){
@@ -2932,7 +3002,8 @@ function photosHTML(key){
       var source = photoSource(key,i);
       var ready = source && source.url;
       var missing = isPhotoDescriptor(p) && !!missingPhotoIds[p.id];
-      return '<div class="photoitem'+(isCover ? ' cover-photo' : '')+(isCandidate ? ' cover-candidate' : '')+
+      var canCaption = currentAppView === "photos" && isPhotoDescriptor(p);
+      return '<div class="photoitem'+(canCaption ? ' captioned' : '')+(isCover ? ' cover-photo' : '')+(isCandidate ? ' cover-candidate' : '')+
         '" data-photo-key="'+esc(key)+'" data-photo-index="'+i+'">' +
         '<button type="button" class="ph'+(ready ? ' ready' : '')+(missing ? ' missing' : '')+'" data-viewph aria-label="'+viewLabel+'">' +
           ((isCover || isCandidate) ? '<span class="cover-badge">'+(isCandidate ? 'Selected' : 'Cover')+'</span>' : '') +
@@ -2941,6 +3012,11 @@ function photosHTML(key){
           ' data-photo-asset="'+esc(source ? source.assetKey : '')+'"' +
           ' data-photo-key="'+esc(key)+'" data-photo-index="'+i+'"></button>' +
         '<button type="button" class="phdel" data-delph="'+i+'" data-delete-label="'+label+'" aria-label="'+label+'">&times;</button>' +
+        (canCaption
+          ? '<input class="photo-caption" type="text" maxlength="'+window.PrePlotCaptions.MAX_LENGTH+
+            '" data-photo-caption data-photo-id="'+esc(p.id)+'" value="'+esc(photoCaption(p))+
+            '" aria-label="Caption for photo '+(i+1)+'" placeholder="Add caption (240 max)">'
+          : '') +
         '</div>';
     }).join("") +
     '<button type="button" class="addph" data-addph="'+esc(key)+'"><span>+</span><span>Photo</span></button>' +
@@ -3324,6 +3400,24 @@ function render(){
    ============================================================ */
 document.addEventListener("input", function(e){
   var t = e.target;
+  if(t.hasAttribute && t.hasAttribute("data-photo-caption")){
+    var photoId = t.getAttribute("data-photo-id");
+    var entry = null;
+    Object.keys(photoBuckets()).some(function(key){
+      return photoList(key).some(function(candidate){
+        if(isPhotoDescriptor(candidate) && candidate.id === photoId){
+          entry = candidate;
+          return true;
+        }
+        return false;
+      });
+    });
+    if(entry){
+      setPhotoCaption(entry,t.value);
+      save();
+    }
+    return;
+  }
   var scope = t.getAttribute && t.getAttribute("data-scope");
   var k = t.getAttribute && t.getAttribute("data-k");
   if(!scope || !k) return;
@@ -3486,6 +3580,7 @@ document.addEventListener("click", function(e){
       }
       if(coverCandidate === photoEntryIdentity(list[index])) coverCandidate = "";
       clearCoverPhotoIfEntry(list[index]);
+      removePhotoCaption(list[index]);
       list.splice(index, 1);
       adjustPhotoCaptureRecoveriesAfterDelete(pk,index);
       save(); render();
@@ -3508,7 +3603,10 @@ document.addEventListener("click", function(e){
       S.rooms = S.rooms.filter(function(r){ return String(r.id) !== rid; });
       Object.keys(photoBuckets()).forEach(function(pk){
         if(pk.indexOf(rid + "|") !== 0) return;
-        photoList(pk).forEach(clearCoverPhotoIfEntry);
+        photoList(pk).forEach(function(entry){
+          clearCoverPhotoIfEntry(entry);
+          removePhotoCaption(entry);
+        });
         delete S.photos[pk];
       });
       save(); render();
@@ -3956,6 +4054,7 @@ function portablePhotoValid(value){
   if(!value || typeof value !== "object" || Array.isArray(value)) return false;
   if(typeof value.mime !== "string" || !value.mime) return false;
   if(typeof value.data !== "string") return false;
+  if(typeof value.caption !== "undefined" && typeof value.caption !== "string") return false;
   var fields = ["bytes","width","height"];
   for(var i=0;i<fields.length;i++){
     var n = value[fields[i]];
@@ -3969,7 +4068,8 @@ function portablePhotoValid(value){
   }
 }
 function portableImportState(payload, useDescriptors){
-  if(!payload || payload.app !== "avl-survey" || payload.schema !== 3 ||
+  if(!payload || payload.app !== "avl-survey" ||
+     (payload.schema !== 3 && payload.schema !== 4) ||
      payload.photoFormat !== "inline" || !payload.data || typeof payload.data !== "object"){
     return Promise.reject(new Error("This file lists photos that are stored on another device. Import a full PrePlot package from that device."));
   }
@@ -3982,6 +4082,7 @@ function portableImportState(payload, useDescriptors){
     log:payload.data.log,
     rooms:payload.data.rooms,
     photos:{},
+    captions:{},
     skipped:payload.data.skipped,
     ui:payload.data.ui,
     meta:payload.data.meta
@@ -4075,6 +4176,8 @@ function portableImportState(payload, useDescriptors){
       if(seen[descriptor.id]) throw new Error("Photo storage returned a duplicate id");
       seen[descriptor.id] = true;
       data.photos[item.job.key].push(descriptor);
+      var portableCaption = window.PrePlotCaptions.normalise(item.job.value.caption);
+      if(portableCaption) data.captions[descriptor.id] = portableCaption;
       if(item.job === coverJob) data.visit.coverPhotoId = descriptor.id;
     });
     var result = validate(data);
@@ -4087,6 +4190,7 @@ function portableImportState(payload, useDescriptors){
     });
     Object.keys(data.photos).forEach(function(key){ data.photos[key] = []; });
     jobs.forEach(function(job){ data.photos[job.key].push(job.value.data); });
+    data.captions = {};
     if(coverJob) data.visit.coverPhotoId = coverJob.value.data;
     return coerce(data);
   });
@@ -4098,6 +4202,7 @@ function packagePhotoEntryValid(value){
      value.filename.indexOf("/") > -1 || value.filename.indexOf("\\") > -1) return false;
   if(value.path !== "photos/" + value.filename) return false;
   if(typeof value.mime !== "string" || !value.mime) return false;
+  if(typeof value.caption !== "undefined" && typeof value.caption !== "string") return false;
   var numeric = ["bytes","width","height"];
   for(var i=0;i<numeric.length;i++){
     var number = value[numeric[i]];
@@ -4117,7 +4222,8 @@ function packageImportPreflight(input){
   var payload;
   try { payload = JSON.parse(bytesText(jsonEntry.bytes)); }
   catch(error){ throw new Error("Package survey data is not valid JSON"); }
-  if(!payload || payload.app !== "avl-survey" || payload.schema !== 3 ||
+  if(!payload || payload.app !== "avl-survey" ||
+     (payload.schema !== 3 && payload.schema !== 4) ||
      payload.photoFormat !== "archive" || payload.pathBase !== "archive-root" ||
      !payload.data || typeof payload.data !== "object"){
     throw new Error("This is not a supported PrePlot package");
@@ -4135,6 +4241,7 @@ function packageImportPreflight(input){
     log:payload.data.log,
     rooms:payload.data.rooms,
     photos:{},
+    captions:{},
     skipped:payload.data.skipped,
     ui:payload.data.ui,
     meta:payload.data.meta
@@ -4199,7 +4306,8 @@ function packageImportPreflight(input){
     archive:archive,
     data:data,
     jobs:jobs,
-    coverJob:coverJob
+    coverJob:coverJob,
+    schema:payload.schema
   };
 }
 function packageBytesEqual(left,right){
@@ -4261,13 +4369,15 @@ function applyPackageImport(input){
     prepared.jobs.forEach(function(job){
       prepared.data.photos[job.key][job.bucketIndex] =
         descriptorFromPhotoRecord(job.record);
+      var importedCaption = window.PrePlotCaptions.normalise(job.item.caption);
+      if(importedCaption) prepared.data.captions[job.record.id] = importedCaption;
       if(job === prepared.coverJob){
         prepared.data.visit.coverPhotoId = job.record.id;
       }
     });
     var result = validate(prepared.data);
     if(!result.ok) throw new Error(result.reason);
-    var applied = applyPreparedImport(coerce(prepared.data),3);
+    var applied = applyPreparedImport(coerce(prepared.data),prepared.schema);
     if(!applied){
       written.forEach(rememberOrphanedPhotoId);
       return false;
@@ -4300,7 +4410,7 @@ function applyPreparedImport(incoming, from){
 }
 function applyPortableImport(payload, useDescriptors){
   return portableImportState(payload,!!useDescriptors).then(function(incoming){
-    return applyPreparedImport(incoming,3);
+    return applyPreparedImport(incoming,payload.schema);
   }).catch(function(error){
     toast("Not imported: " + (error && error.message ? error.message : "portable import failed"));
     return false;
@@ -4314,7 +4424,8 @@ function applyImport(text){
   try { parsed = JSON.parse(text); }
   catch(e){ toast("That file isn't valid JSON"); return false; }
 
-  if(parsed && parsed.app === "avl-survey" && parsed.schema === 3){
+  if(parsed && parsed.app === "avl-survey" &&
+     (parsed.schema === 3 || parsed.schema === 4)){
     if(parsed.photoFormat === "archive"){
       toast("Not imported: this is the survey file from inside a package. Import the complete .zip package instead.");
       return false;
@@ -4810,14 +4921,17 @@ function reportTakeTableColumns(rows,start,w,maxHeight){
     difference:bestDifference
   };
 }
-function photoCard(page,x,y,w,ref,filename,caption,imageIndex,images,tall){
+function photoCard(page,x,y,w,ref,filename,context,caption,imageIndex,images,tall){
   var h = tall ? 430 : 226;
-  var imageH = tall ? 350 : 158;
+  var imageH = tall ? 350 : (caption ? 144 : 158);
   card(page,x,y,w,h);
   pdfImageCover(page,imageIndex,x+8,y+8,w-16,imageH,images);
   pdfDrawText(page,"PHOTO "+ref,x+10,y+imageH+18,9,true,PDF_COLORS.teal);
   pdfDrawText(page,filename,x+w-10,y+imageH+19,7.5,true,PDF_COLORS.ink,"right");
-  pdfDrawWrapped(page,caption,x+10,y+imageH+36,w-20,8.5,false,PDF_COLORS.muted,11,2);
+  pdfDrawWrapped(page,context,x+10,y+imageH+36,w-20,8.5,false,PDF_COLORS.muted,11,2);
+  if(caption){
+    pdfDrawWrapped(page,caption,x+10,y+imageH+50,w-20,8.5,false,PDF_COLORS.ink,11,2);
+  }
 }
 
 function reportBasis(data){
@@ -5024,7 +5138,8 @@ function buildReportModel(manifest){
       return {
         ref:entry.ref,
         filename:entry.filename,
-        caption:entry.roomName + " \u00b7 " + entry.sectionLabel,
+        context:entry.roomName + " \u00b7 " + entry.sectionLabel,
+        caption:entry.caption || "",
         roomId:entry.roomId === null ? null : String(entry.roomId),
         sectionId:entry.sectionId,
         roomName:entry.roomName,
@@ -5144,7 +5259,7 @@ function buildReportDocument(report,images){
     if(entries.length === 1){
       var only = entries[0];
       photoCard(photoPage,156,76,480,only.ref,only.filename,
-        only.caption,start,images,true);
+        only.context,only.caption,start,images,true);
       layout.photoCards.push({ref:only.ref,filename:only.filename,imageIndex:start});
     } else {
       var gap = 12;
@@ -5153,7 +5268,7 @@ function buildReportDocument(report,images){
         var x = 32 + (index % 3) * (width + gap);
         var top = 72 + Math.floor(index / 3) * 238;
         photoCard(photoPage,x,top,width,entry.ref,entry.filename,
-          entry.caption,start+index,images,false);
+          entry.context,entry.caption,start+index,images,false);
         layout.photoCards.push({
           ref:entry.ref,filename:entry.filename,imageIndex:start+index
         });
@@ -5246,7 +5361,8 @@ function buildHtmlReport(report){
     ".photo-open img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}.photo-copy{padding:12px 14px}" +
     ".photo-line{display:flex;gap:12px;justify-content:space-between;align-items:baseline}" +
     ".photo-ref{font-weight:700;color:var(--teal);white-space:nowrap}.filename{font-size:.75rem;color:var(--muted);" +
-    "overflow-wrap:anywhere;text-align:right}.caption{margin:6px 0 0;color:var(--ink)}" +
+    "overflow-wrap:anywhere;text-align:right}.caption{margin:6px 0 0;color:var(--muted)}" +
+    ".user-caption{margin:5px 0 0;color:var(--ink);font-weight:600}" +
     ".viewer[hidden]{display:none}.viewer{position:fixed;inset:0;z-index:1000;background:rgba(8,16,26,.96);" +
     "display:grid;grid-template-rows:auto 1fr auto;color:#fff}.viewer-bar{display:flex;align-items:center;" +
     "gap:12px;padding:12px 16px}.viewer-title{flex:1;min-width:0}.viewer-title strong,.viewer-title span{" +
@@ -5254,7 +5370,7 @@ function buildHtmlReport(report){
     ".viewer-close{border:1px solid #64748B;border-radius:999px;background:transparent;color:#fff;" +
     "font:inherit;padding:8px 14px;cursor:pointer}.viewer-stage{min-height:0;display:grid;place-items:center;" +
     "padding:0 16px}.viewer-stage img{display:block;max-width:100%;max-height:100%;object-fit:contain}" +
-    ".viewer-caption{padding:12px 16px 18px;text-align:center;color:#d8e1ea}" +
+    ".viewer-caption{padding:12px 16px 18px;text-align:center;color:#d8e1ea;white-space:pre-wrap}" +
     "@media(max-width:620px){.shell{padding-left:14px;padding-right:14px}.hero-copy{padding:32px 18px 38px}" +
     ".data-table th{width:38%}.photos{grid-template-columns:1fr 1fr;gap:10px}.photo-copy{padding:10px}" +
     ".photo-line{display:block}.filename{text-align:left;display:block;margin-top:2px}}" +
@@ -5348,15 +5464,19 @@ function buildHtmlReport(report){
       var path = "photos/" + photo.filename;
       h.push('<article class="photo-card" id="photo-' + reportHtmlEsc(photo.ref) +
         '" data-ref="' + reportHtmlEsc(photo.ref) + '" data-filename="' +
-        reportHtmlEsc(photo.filename) + '" data-caption="' + reportHtmlEsc(photo.caption) + '">');
+        reportHtmlEsc(photo.filename) + '" data-context="' + reportHtmlEsc(photo.context) +
+        '" data-caption="' + reportHtmlEsc(photo.caption) + '">');
       h.push('<button type="button" class="photo-open" data-photo-index="' + index +
         '" data-src="' + reportHtmlEsc(path) + '" aria-label="Open photo ' +
-        reportHtmlEsc(photo.ref) + ', ' + reportHtmlEsc(photo.caption) + '">');
+        reportHtmlEsc(photo.ref) + ', ' + reportHtmlEsc(photo.context) +
+        (photo.caption ? ", " + reportHtmlEsc(photo.caption) : "") + '">');
       h.push('<img src="' + reportHtmlEsc(path) + '" loading="lazy" alt=""></button>');
       h.push('<div class="photo-copy"><div class="photo-line"><span class="photo-ref">PHOTO ' +
         reportHtmlEsc(photo.ref) + '</span><span class="filename">' +
         reportHtmlEsc(photo.filename) + '</span></div><p class="caption">' +
-        reportHtmlEsc(photo.caption) + "</p></div></article>");
+        reportHtmlEsc(photo.context) + "</p>" +
+        (photo.caption ? '<p class="user-caption">' + reportHtmlEsc(photo.caption) + "</p>" : "") +
+        "</div></article>");
     });
     h.push("</div>");
   } else {
@@ -5381,9 +5501,10 @@ function buildHtmlReport(report){
     "var current=-1;var opener=null;var scrollY=0;var touchX=null;" +
     "function show(index){if(!buttons.length)return;current=(index+buttons.length)%buttons.length;" +
     "var button=buttons[current];var card=button.closest('.photo-card');opener=opener||button;" +
-    "image.src=button.getAttribute('data-src');image.alt='Photo '+card.getAttribute('data-ref')+', '+card.getAttribute('data-caption');" +
+    "image.src=button.getAttribute('data-src');image.alt='Photo '+card.getAttribute('data-ref')+', '+card.getAttribute('data-context');" +
     "ref.textContent='PHOTO '+card.getAttribute('data-ref');file.textContent=card.getAttribute('data-filename');" +
-    "caption.textContent=card.getAttribute('data-caption');viewer.hidden=false;viewer.setAttribute('aria-hidden','false');" +
+    "var context=card.getAttribute('data-context');var note=card.getAttribute('data-caption');" +
+    "caption.textContent=context+(note?'\\n'+note:'');viewer.hidden=false;viewer.setAttribute('aria-hidden','false');" +
     "closeButton.focus();}" +
     "function open(index,button){opener=button;scrollY=window.pageYOffset||0;document.body.style.position='fixed';" +
     "document.body.style.top=(-scrollY)+'px';document.body.style.width='100%';show(index);}" +
@@ -5688,6 +5809,14 @@ window.__avl = {
   localBytes:localBytes,
   photoCount:photoCount,
   photoManifest:photoManifest,
+  photoCaption:photoCaption,
+  setPhotoCaption:function(entry,value){
+    var changed = setPhotoCaption(entry,value);
+    if(changed) save();
+    return changed;
+  },
+  removePhotoCaption:removePhotoCaption,
+  photoCaptions:window.PrePlotCaptions,
   LIGHT_FIELDS:LIGHT_FIELDS,
   isPhotoDescriptor:isPhotoDescriptor,
   photoStorageCounts:photoStorageCounts,
@@ -5714,6 +5843,8 @@ window.__avl = {
   zipReadStore:zipReadStore,
   photoManifestCSV:photoManifestCSV,
   crmNoteText:crmNoteText,
+  packageEnvelope:packageEnvelope,
+  packageImportPreflight:packageImportPreflight,
   readPhotoSource:readPhotoSource,
   preparePhotoPackage:preparePhotoPackage,
   sharePreparedPackage:sharePreparedPackage,
@@ -5728,9 +5859,11 @@ window.__avl = {
     return preparedPhotoPackage && preparedPhotoPackage.reportLayout;
   },
   pdfJpegDimensions:pdfJpegDimensions,
+  pdfTextToken:pdfTextToken,
   pdfWriteDocument:pdfWriteDocument,
   buildReportModel:buildReportModel,
   buildHtmlReport:buildHtmlReport,
+  reportHtmlEsc:reportHtmlEsc,
   buildReportDocument:buildReportDocument,
   preparePdfRenditions:preparePdfRenditions,
   assemblePdfReportModel:assemblePdfReportModel,
@@ -5776,6 +5909,7 @@ window.__avl = {
     S = blankState(); load(); render(); refreshPhotoIntegrity();
   },
   setDescriptorStateForTest:function(data){
+    data = coerce(data);
     var result = validate(data);
     if(!result.ok) return Promise.reject(new Error(result.reason));
     revokeAllPhotoAssets();
