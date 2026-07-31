@@ -111,7 +111,7 @@ test("a photo batch preserves selection order, renders once and reports once", a
     assert.equal(result.toastMutations,1,"one capture batch must produce one summary toast");
     assert.equal(result.toast,"4 photos added.");
     assert.equal(result.viewer,false);
-    assert.equal(result.thumbnails,4);
+    assert.equal(result.thumbnails,0,"capture must not put photo controls back in the Survey view");
     assert.equal(result.schema,3);
   });
 });
@@ -171,6 +171,7 @@ test("the recovery notice is rebuilt by later renders and cannot be dismissed", 
       } finally {
         Storage.prototype.setItem = realSet;
       }
+      window.__avl.switchAppView("photos");
       var first = document.querySelectorAll("[data-photo-recovery]").length;
       var firstActions = document.querySelectorAll("[data-recoverph]").length;
 
@@ -181,8 +182,10 @@ test("the recovery notice is rebuilt by later renders and cannot be dismissed", 
       );
       var afterRemoval = document.querySelectorAll("[data-photo-recovery]").length;
 
-      /* any unrelated render must bring it back */
+      /* any unrelated render must bring it back in the Photos view */
+      window.__avl.switchAppView("survey");
       document.querySelector('[data-skip="1|dims"]').click();
+      window.__avl.switchAppView("photos");
       return {
         first:first,
         firstActions:firstActions,
@@ -226,6 +229,7 @@ test("recovery coordinates follow deletions and never attach to another photo", 
       } finally {
         Storage.prototype.setItem = realSet;
       }
+      window.__avl.switchAppView("photos");
       function labels(){
         return Array.prototype.map.call(
           document.querySelectorAll("[data-recoverph]"),
@@ -462,6 +466,7 @@ test("four memory-only photos produce one persistent recovery notice and no view
       await new Promise(function(resolve){ setTimeout(resolve,0); });
       observer.disconnect();
 
+      window.__avl.switchAppView("photos");
       var notice = document.querySelector('[data-photo-recovery="1|notes"]');
       return {
         memory:window.__avl.S().photos["1|notes"].length,
@@ -482,7 +487,7 @@ test("four memory-only photos produce one persistent recovery notice and no view
     assert.equal(result.noticeCount,1);
     assert.match(result.noticeText,/4 photos could not be added to the survey/i);
     assert.match(result.noticeText,/4 are available only until this page closes/i);
-    assert.match(result.noticeText,/Export or save them before leaving this page/i);
+    assert.match(result.noticeText,/Prepare the visit package or save them before leaving this page/i);
     assert.equal(result.saveActions,4);
     assert.equal(result.dismissActions,0);
     assert.deepEqual(result.recoveries,[

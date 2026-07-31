@@ -208,6 +208,7 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
         root + "/photos/" + manifest[3].filename,
         root + "/PrePlot-Exact-Package-Client-2026-07-26.pdf",
         root + "/" + root + ".html",
+        root + "/" + root + "-crm-note.txt",
         root + "/data/survey-export.json",
         root + "/data/photo-manifest.csv"
       ]);
@@ -570,7 +571,7 @@ test("same-length replacement and identity changes make a package neither sharea
     assert.equal(stale.shareCalls,0);
     assert.equal(stale.canCalls,0);
     assert.deepEqual(stale.revoked,["blob:prepared-package"]);
-    assert.match(stale.text,/Photos changed since preparation\. Prepare again\./);
+    assert.match(stale.text,/Survey changed since preparation\. Prepare again\./);
     assert.equal(stale.shareDisabled,true);
     assert.equal(stale.downloadDisabled,true);
     assert.equal(stale.downloadResult,false);
@@ -650,7 +651,7 @@ test("a package that is still marked ready but no longer current cannot be downl
     assert.equal(result.clicks.length,1,"no second download anchor may be clicked");
     assert.equal(result.status,"stale");
     assert.deepEqual(result.revoked,["blob:ready-but-stale"]);
-    assert.match(result.text,/Photos changed since preparation\. Prepare again\./);
+    assert.match(result.text,/Survey changed since preparation\. Prepare again\./);
   });
 });
 
