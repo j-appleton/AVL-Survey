@@ -255,7 +255,8 @@ test("photo manifest uses MIME extensions and frozen section labels without muta
       sectionId:"disp",
       sectionLabel:"Display",
       mime:"image/png",
-      bytes:3
+      bytes:3,
+      caption:""
     });
   });
 });

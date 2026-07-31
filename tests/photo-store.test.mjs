@@ -222,7 +222,7 @@ test("new captures persist authoritative descriptors built from exact stored rec
       };
     });
 
-    assert.equal(result.schema, 3);
+    assert.equal(result.schema, 4);
     assert.equal(result.statePhotos.length, 2);
     assert.deepEqual(result.durablePhotos, result.statePhotos,
       "localStorage must persist only the descriptors returned by the photo store");
@@ -305,7 +305,7 @@ test("an IndexedDB add failure falls back inline and creates no orphan record", 
       };
     });
 
-    assert.equal(result.schema, 3);
+    assert.equal(result.schema, 4);
     assert.equal(result.memory.length, 1);
     assert.deepEqual(result.durable, result.memory);
     assert.equal(result.records,0,"a rejected add must leave no orphan in device storage");
