@@ -282,3 +282,124 @@ test("real PDF and HTML previews preserve state and revoke every preview URL", a
     assert.equal(await page.evaluate(function(){ return window.__avl.composePreviewUrls().length; }),0);
   });
 });
+
+/* --- guards that shipped without proof ----------------------------------- */
+
+test("an imported package cannot exclude the photo it names as cover", async function(){
+  await withApp(async function(page){
+    await installPhotos(page,2);
+    var result = await page.evaluate(async function(){
+      window.__avl.S().visit.coverPhotoId = window.__avl.S().photos["1|audio"][0].id;
+      window.__avl.preparePhotoPackage();
+      await new Promise(function(resolve){
+        var timer = setInterval(function(){
+          if(window.__avl.photoPackageStatus().status === "ready"){
+            clearInterval(timer);
+            resolve();
+          }
+        },80);
+      });
+      var bytes = new Uint8Array(await window.__avl.photoPackageFile().arrayBuffer());
+
+      /* A package is untrusted input. Flag the cover photo itself as excluded,
+         which the in-app control refuses to do and therefore never produces. */
+      var archive = window.__avl.zipReadStore(bytes);
+      var jsonName = archive.root + "/data/survey-export.json";
+      var payload = JSON.parse(new TextDecoder().decode(archive.entries[jsonName].bytes));
+      var coverName = payload.coverPhoto;
+      Object.keys(payload.data.photos).forEach(function(key){
+        payload.data.photos[key].forEach(function(item){
+          if(item.filename === coverName) item.excluded = true;
+        });
+      });
+      var encoded = new TextEncoder().encode(JSON.stringify(payload));
+      var entries = archive.names.map(function(name){
+        return name === jsonName
+          ? {name:name,bytes:encoded}
+          : {name:name,bytes:archive.entries[name].bytes};
+      });
+      var rebuilt = new Uint8Array(await window.__avl.zipStore(entries).arrayBuffer());
+
+      await window.AVLPhotoStore.clear();
+      var imported = await window.__avl.applyPackageImport(rebuilt);
+      var coverId = window.__avl.S().visit.coverPhotoId;
+      var model = window.__avl.buildReportModel();
+      return {
+        imported:imported,
+        coverName:coverName,
+        coverId:coverId,
+        coverIsExcluded:!!window.__avl.S().compose.excluded[coverId],
+        exclusions:Object.keys(window.__avl.S().compose.excluded).length,
+        modelCoverIndex:model.cover.coverPhoto,
+        modelPhotoCount:model.photos.length
+      };
+    });
+    assert.equal(result.imported,true,"the package is otherwise structurally valid");
+    assert.ok(result.coverName,"the fixture must actually name a cover");
+    assert.equal(
+      result.coverIsExcluded,false,
+      "coercion must strip an exclusion that lands on the cover photo"
+    );
+    assert.equal(result.exclusions,0,"no other exclusion may be invented");
+    assert.equal(
+      result.modelCoverIndex,0,
+      "the cover must still resolve to an image in the filtered report list"
+    );
+    assert.equal(result.modelPhotoCount,2,"no photo may be dropped from the report");
+  });
+});
+
+test("preview overlays carry the real report bytes, not stand-in markup", async function(){
+  await withApp(async function(page){
+    await installPhotos(page,2);
+    await page.evaluate(function(){
+      window.__avl.setComposeSummary("Only the real builder emits this sentence.");
+    });
+    await page.locator('[data-app-view="compose"]').click();
+
+    var pdf = await page.evaluate(async function(){
+      var expected = await window.__avl.generatePdfReport();
+      var opened = await window.__avl.openComposePreview("pdf");
+      var frame = document.querySelector("[data-compose-preview-overlay] iframe");
+      var actual = new Uint8Array(await fetch(frame.src).then(function(response){
+        return response.arrayBuffer();
+      }));
+      var same = actual.length === expected.bytes.length;
+      if(same){
+        for(var i=0;i<actual.length;i++){
+          if(actual[i] !== expected.bytes[i]){ same = false; break; }
+        }
+      }
+      return {
+        opened:opened,
+        head:String.fromCharCode.apply(null,actual.subarray(0,8)),
+        length:actual.length,
+        expectedLength:expected.bytes.length,
+        identical:same
+      };
+    });
+    assert.equal(pdf.opened,true);
+    assert.match(pdf.head,/^%PDF-1\.4/,"the preview must be a real PDF");
+    assert.ok(pdf.expectedLength > 2000,"the fixture report must be substantial");
+    assert.equal(
+      pdf.identical,true,
+      "the previewed bytes must be exactly what generatePdfReport produces"
+    );
+    await page.locator("[data-compose-preview-close]").click();
+
+    var html = await page.evaluate(async function(){
+      var opened = await window.__avl.openComposePreview("html");
+      var frame = document.querySelector("[data-compose-preview-overlay] iframe");
+      var text = await fetch(frame.src).then(function(response){ return response.text(); });
+      return {opened:opened,text:text};
+    });
+    assert.equal(html.opened,true);
+    assert.match(html.text,/^<!doctype html>/i,"the preview must be the real report document");
+    assert.match(html.text,/Only the real builder emits this sentence\./,
+      "the previewed HTML must carry the live executive summary");
+    assert.match(html.text,/Compose Client/,"the previewed HTML must carry the live cover data");
+    assert.doesNotMatch(html.text,/"photos\//,
+      "every archive-relative photo path must be swapped for a preview blob URL");
+    await page.locator("[data-compose-preview-close]").click();
+  });
+});
