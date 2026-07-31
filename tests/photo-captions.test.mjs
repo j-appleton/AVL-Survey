@@ -431,3 +431,121 @@ test("editing a caption invalidates an already prepared package", async function
     assert.equal(result.status,"stale");
   });
 });
+
+/* --- guards that shipped without proof ----------------------------------- */
+
+test("deleting a room reaps its captions, and an orphan caption is not survivable", async function(){
+  await withCaptionApp(async function(page){
+    var installed = await installCaptionState(page,["Existing mount stays","Conduit stub-out left of centre"]);
+
+    /* installCaptionState already parks both captioned photos on 1|audio.
+       Delete that room through the real two-tap control. */
+    var roomDelete = page.locator('[data-delroom="1"]');
+    await roomDelete.click();
+    await roomDelete.click();
+    await page.waitForFunction(function(){ return window.__avl.S().rooms.length === 0; });
+
+    var after = await page.evaluate(function(){
+      return {
+        captions:Object.keys(window.__avl.S().captions),
+        buckets:Object.keys(window.__avl.S().photos)
+      };
+    });
+    assert.deepEqual(after.buckets,[],"the room's photo buckets must be gone");
+    assert.deepEqual(
+      after.captions,[],
+      "a caption whose photo was deleted with its room must be reaped"
+    );
+
+    /* Why the reaping above is load-bearing rather than tidy: validate() treats
+       an orphan caption as a corrupt payload, so a single stranded key makes
+       the whole saved survey refuse to load. */
+    await page.waitForFunction(function(){
+      return !!localStorage.getItem("avl_survey_v1");
+    });
+    var stranded = await page.evaluate(function(id){
+      var envelope = JSON.parse(localStorage.getItem("avl_survey_v1"));
+      envelope.data.captions[id] = "stranded";
+      localStorage.setItem("avl_survey_v1",JSON.stringify(envelope));
+      return true;
+    },installed.ids[0]);
+    assert.equal(stranded,true);
+
+    await page.reload({waitUntil:"domcontentloaded"});
+    await page.waitForFunction(function(){ return !!window.__avl; });
+    await page.waitForFunction(function(){
+      return document.getElementById("toast").textContent.length > 0;
+    });
+    var reload = await page.evaluate(function(){
+      return {
+        toast:document.getElementById("toast").textContent,
+        client:(window.__avl.S().visit || {}).client || ""
+      };
+    });
+    assert.match(reload.toast,/has no matching photo/,
+      "an orphan caption blocks the entire survey from loading");
+    assert.equal(reload.client,"",
+      "the survey is unavailable, which is why every delete path must reap");
+  });
+});
+
+test("a multi-line caption cannot break the CRM note's CRLF contract", async function(){
+  await withCaptionApp(async function(page){
+    var result = await page.evaluate(async function(jpg){
+      var record = await window.AVLPhotoStore.addDataUrl(jpg,8,6);
+      var descriptor = {
+        id:record.id, mime:record.mime, bytes:record.bytes,
+        width:record.width, height:record.height
+      };
+      await window.__avl.setDescriptorStateForTest({
+        visit:{client:"Sender",site:"Site",date:"2026-07-30",coverPhotoId:record.id},
+        log:{}, rooms:[{id:1,d:{name:"Room One"}}],
+        photos:{"1|audio":[descriptor]}, captions:{}, skipped:{}, ui:{}
+      });
+      window.__avl.preparePhotoPackage();
+      await new Promise(function(resolve){
+        var timer = setInterval(function(){
+          if(window.__avl.photoPackageStatus().status === "ready"){
+            clearInterval(timer);
+            resolve();
+          }
+        },100);
+      });
+      var bytes = new Uint8Array(await window.__avl.photoPackageFile().arrayBuffer());
+
+      /* Multi-line captions are supported on the way in, so the note builder
+         has to survive them. A package is untrusted input and can carry either
+         line ending. */
+      var archive = window.__avl.zipReadStore(bytes);
+      var jsonName = archive.root + "/data/survey-export.json";
+      var payload = JSON.parse(new TextDecoder().decode(archive.entries[jsonName].bytes));
+      payload.data.photos["1|audio"][0].caption = "Existing mount\r\nverify blocking depth";
+      var encoded = new TextEncoder().encode(JSON.stringify(payload));
+      var entries = archive.names.map(function(name){
+        return name === jsonName
+          ? {name:name,bytes:encoded}
+          : {name:name,bytes:archive.entries[name].bytes};
+      });
+      var rebuilt = new Uint8Array(await window.__avl.zipStore(entries).arrayBuffer());
+
+      await window.AVLPhotoStore.clear();
+      var imported = await window.__avl.applyPackageImport(rebuilt);
+      return {imported:imported, note:imported ? window.__avl.crmNoteText() : ""};
+    },JPG);
+
+    assert.equal(result.imported,true,"the package itself is structurally valid");
+    assert.doesNotMatch(
+      result.note,/(^|[^\r])\n/,
+      "every CRM note line break must remain CRLF"
+    );
+    assert.doesNotMatch(
+      result.note,/\r(?!\n)/,
+      "no stray carriage return may reach the CRM note"
+    );
+    assert.match(
+      result.note,
+      /Photo 001: Existing mount\r\n {2}verify blocking depth\r\n/,
+      "continuation lines indent two spaces, exactly like every other multi-line field"
+    );
+  });
+});

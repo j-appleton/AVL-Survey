@@ -2025,7 +2025,9 @@ function crmPhotoCaptionLines(lines,key,manifest){
   var captions = [];
   manifest.forEach(function(entry){
     if(entry.key !== key || !entry.caption) return;
-    captions.push("Photo " + entry.ref + ": " + entry.caption);
+    var parts = String(entry.caption).replace(/\r\n?/g,"\n").split("\n");
+    captions.push("Photo " + entry.ref + ": " + (parts.shift() || ""));
+    parts.forEach(function(part){ captions.push("  " + part); });
   });
   if(!captions.length) return;
   if(lines[lines.length - 1] === "") lines.pop();
