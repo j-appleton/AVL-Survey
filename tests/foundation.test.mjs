@@ -36,7 +36,7 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
     var versions = await page.evaluate(function(){
       return {app:window.__avl.APP_VERSION, schema:window.__avl.SCHEMA};
     });
-    assert.deepEqual(versions, {app:PACKAGE_VERSION, schema:4});
+    assert.deepEqual(versions, {app:PACKAGE_VERSION, schema:5});
     assert.equal(PACKAGE_LOCK.version, PACKAGE_VERSION);
     assert.equal(PACKAGE_LOCK.packages[""].version, PACKAGE_VERSION);
 
@@ -130,7 +130,7 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
     var persistedMigration = await page.evaluate(function(){
       return JSON.parse(window.__avl.raw());
     });
-    assert.equal(persistedMigration.schema, 4);
+    assert.equal(persistedMigration.schema, 5);
     assert.equal(persistedMigration.data.visit.client, "Legacy client");
 
     var rejectedImport = await page.evaluate(function(){

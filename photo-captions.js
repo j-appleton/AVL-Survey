@@ -59,18 +59,25 @@
     return true;
   }
 
-  function validate(map,validIds){
+  function validate(map){
     if(!isPlainObject(map)) return "captions is malformed";
-    var ids = validIds || {};
     var keys = Object.keys(map);
     for(var i=0;i<keys.length;i++){
       var id = keys[i];
       if(typeof map[id] !== "string") return "caption " + id + " is not text";
       if(!normalise(map[id])) return "caption " + id + " is blank";
       if(map[id].length > MAX_LENGTH) return "caption " + id + " is too long";
-      if(!ids[id]) return "caption " + id + " has no matching photo";
     }
     return "";
+  }
+
+  function repair(map,validIds){
+    var cleaned = {};
+    if(!isPlainObject(map)) return cleaned;
+    Object.keys(map).forEach(function(id){
+      if(validIds[id]) cleaned[id] = map[id];
+    });
+    return cleaned;
   }
 
   root.PrePlotCaptions = {
@@ -82,6 +89,7 @@
     get:get,
     set:set,
     remove:remove,
-    validate:validate
+    validate:validate,
+    repair:repair
   };
 })(window);

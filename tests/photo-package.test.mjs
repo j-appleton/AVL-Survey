@@ -227,7 +227,7 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
         await readFile(join(extracted,root,"data","survey-export.json"),"utf8")
       );
       assert.equal(exported.app, "avl-survey");
-      assert.equal(exported.schema, 4);
+      assert.equal(exported.schema, 5);
       assert.equal(exported.photoFormat, "archive");
       assert.equal(exported.pathBase, "archive-root");
       assert.deepEqual(
@@ -302,7 +302,7 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
       var rows = parseCsv(csvText);
       assert.deepEqual(rows[0],[
         "ref","filename","key","bucketIndex","roomLabel",
-        "roomName","sectionId","sectionLabel","mime","caption"
+        "roomName","sectionId","sectionLabel","mime","caption","excluded"
       ]);
       assert.deepEqual(
         rows.slice(1),
@@ -310,7 +310,7 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
           return [
             entry.ref,entry.filename,entry.key,String(entry.bucketIndex),
             entry.roomLabel,entry.roomName,entry.sectionId,entry.sectionLabel,entry.mime,
-            entry.caption
+            entry.caption,""
           ];
         })
       );

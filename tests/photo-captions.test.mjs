@@ -127,7 +127,7 @@ async function optionalTool(t,command,args){
   }
 }
 
-test("schema 3 migrates to a strict id-keyed caption map", async function(){
+test("schema 3 migrates captions and orphan keys are repaired rather than blocking load", async function(){
   await withCaptionApp(async function(page){
     var result = await page.evaluate(function(){
       var descriptor = {
@@ -157,6 +157,7 @@ test("schema 3 migrates to a strict id-keyed caption map", async function(){
           rooms:[],
           photos:{"1|audio":[descriptor]},
           captions:captions,
+          compose:{summary:"",excluded:{}},
           skipped:{},
           ui:{},
           meta:{}
@@ -167,6 +168,7 @@ test("schema 3 migrates to a strict id-keyed caption map", async function(){
         array:window.__avl.validate(state([])),
         number:window.__avl.validate(state({"photo-one":7})),
         orphan:window.__avl.validate(state({"not-a-photo":"note"})),
+        repaired:window.__avl.migrate({app:"avl-survey",schema:5,data:state({"not-a-photo":"note"})}),
         blank:window.__avl.validate(state({"photo-one":"   "})),
         tooLong:window.__avl.validate(state({"photo-one":new Array(242).join("x")})),
         good:window.__avl.validate(state({"photo-one":"Rack input"})),
@@ -178,7 +180,8 @@ test("schema 3 migrates to a strict id-keyed caption map", async function(){
     assert.deepEqual(result.migrated.data.captions,{});
     assert.equal(result.array.ok,false);
     assert.equal(result.number.ok,false);
-    assert.equal(result.orphan.ok,false);
+    assert.equal(result.orphan.ok,true);
+    assert.deepEqual(result.repaired.data.captions,{});
     assert.equal(result.blank.ok,false);
     assert.equal(result.tooLong.ok,false);
     assert.deepEqual(result.good,{ok:true});
@@ -186,7 +189,7 @@ test("schema 3 migrates to a strict id-keyed caption map", async function(){
   });
 });
 
-test("Photos is the only caption editor; identity survives reordering and deletion removes the caption", async function(){
+test("Survey stays capture-only while caption identity survives reordering and deletion", async function(){
   await withCaptionApp(async function(page){
     var installed = await installCaptionState(page,["First note","Second note"],true);
     var beforeSwitch = await page.evaluate(function(){
@@ -376,9 +379,9 @@ test("captions round-trip through the package, reports, CSV and CRM without leak
 
     var rows = parseCsv(result.csv);
     assert.equal(rows.length,3);
-    assert.equal(rows[0][rows[0].length-1],"caption");
-    assert.equal(rows[1][rows[1].length-1],pdfCaption);
-    assert.equal(rows[2][rows[2].length-1],hostileCaption);
+    assert.equal(rows[0][rows[0].length-2],"caption");
+    assert.equal(rows[1][rows[1].length-2],pdfCaption);
+    assert.equal(rows[2][rows[2].length-2],hostileCaption);
 
     assert.equal(result.badNumber,false);
     assert.equal(result.badObject,false);
@@ -434,7 +437,7 @@ test("editing a caption invalidates an already prepared package", async function
 
 /* --- guards that shipped without proof ----------------------------------- */
 
-test("deleting a room reaps its captions, and an orphan caption is not survivable", async function(){
+test("deleting a room reaps its captions, and an orphan caption is repaired on load", async function(){
   await withCaptionApp(async function(page){
     var installed = await installCaptionState(page,["Existing mount stays","Conduit stub-out left of centre"]);
 
@@ -457,9 +460,8 @@ test("deleting a room reaps its captions, and an orphan caption is not survivabl
       "a caption whose photo was deleted with its room must be reaped"
     );
 
-    /* Why the reaping above is load-bearing rather than tidy: validate() treats
-       an orphan caption as a corrupt payload, so a single stranded key makes
-       the whole saved survey refuse to load. */
+    /* A stranded key is still undesirable, but it no longer makes the entire
+       survey unavailable: coercion repairs it at the load boundary. */
     await page.waitForFunction(function(){
       return !!localStorage.getItem("avl_survey_v1");
     });
@@ -473,19 +475,16 @@ test("deleting a room reaps its captions, and an orphan caption is not survivabl
 
     await page.reload({waitUntil:"domcontentloaded"});
     await page.waitForFunction(function(){ return !!window.__avl; });
-    await page.waitForFunction(function(){
-      return document.getElementById("toast").textContent.length > 0;
-    });
     var reload = await page.evaluate(function(){
       return {
         toast:document.getElementById("toast").textContent,
-        client:(window.__avl.S().visit || {}).client || ""
+        client:(window.__avl.S().visit || {}).client || "",
+        captions:window.__avl.S().captions
       };
     });
-    assert.match(reload.toast,/has no matching photo/,
-      "an orphan caption blocks the entire survey from loading");
-    assert.equal(reload.client,"",
-      "the survey is unavailable, which is why every delete path must reap");
+    assert.doesNotMatch(reload.toast,/not loaded/);
+    assert.equal(reload.client,"Caption Client");
+    assert.deepEqual(reload.captions,{});
   });
 });
 

@@ -120,7 +120,7 @@ test("schema-4 state accepts the photo union and snapshots sixty descriptors by 
     assert.equal(result.malformed.ok,false);
     assert.equal(result.duplicated.ok,false);
     assert.equal(result.snap,true);
-    assert.equal(result.schema,4);
+    assert.equal(result.schema,5);
     assert.equal(result.count,60);
     assert.deepEqual(result.first,descriptor("fixture-0","image/jpeg",1000,900,675));
     assert.ok(result.rawLength < 20000,"a descriptor backup must not duplicate photo payloads");
@@ -433,7 +433,7 @@ test("a descriptor-backed package extracts exact bytes without duplicating them 
       var packaged = JSON.parse(
         await readFile(join(extracted,root,"data","survey-export.json"),"utf8")
       );
-      assert.equal(packaged.schema,4);
+      assert.equal(packaged.schema,5);
       assert.equal(packaged.photoFormat,"archive");
       assert.equal(packaged.pathBase,"archive-root");
       assert.doesNotMatch(JSON.stringify(packaged),/data:image\//);
@@ -481,7 +481,7 @@ test("the package's portable payload is byte-exact, carries no IDs and productio
     },stateWithPhotos([current,B_DATA],false));
     var portable = exported.portable;
 
-    assert.equal(portable.schema,4);
+    assert.equal(portable.schema,5);
     assert.equal(portable.photoFormat,"inline");
     assert.deepEqual(
       portable.data.photos["1|notes"].map(function(entry){
