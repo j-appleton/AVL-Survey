@@ -116,5 +116,13 @@ test("the PDF renderer consumes the report model without reaching back into surv
     assert.match(result.raw,/MODEL ONLY ROOM/);
     assert.doesNotMatch(result.raw,/STATE CLIENT MUST NOT RENDER/);
     assert.doesNotMatch(result.raw,/STATE ROOM MUST NOT RENDER/);
+    var titleMatch = result.raw.match(/\/Title <FEFF([0-9A-F]+)>/);
+    assert.ok(titleMatch,"the PDF must carry a Unicode document title");
+    var title = "";
+    for(var i=0;i<titleMatch[1].length;i+=4){
+      title += String.fromCharCode(parseInt(titleMatch[1].slice(i,i+4),16));
+    }
+    assert.match(title,/MODEL ONLY CLIENT/);
+    assert.doesNotMatch(title,/STATE CLIENT MUST NOT RENDER/);
   });
 });
