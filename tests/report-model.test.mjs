@@ -79,7 +79,9 @@ test("report-model extraction preserves the fixed PDF byte for byte", async func
       return Array.from(report.bytes);
     },JPG_BYTES);
     var hash = createHash("sha256").update(Buffer.from(bytes)).digest("hex");
-    assert.equal(hash,"62fad26a6ba9527345db1ff9e0cb7e78708cc93f58d6c46e7857f76b7e284eb0");
+    /* D0 established the original byte snapshot. D1 deliberately changes
+       only the product capitalization carried by the PDF metadata. */
+    assert.equal(hash,"52d13f185a35a94ccd581d2feca72238fac2b34b38265bebece96d9bcc23145d");
   });
 });
 

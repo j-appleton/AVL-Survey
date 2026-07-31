@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>Preplot</title>
+<title>PrePlot</title>
 
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./favicon.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Preplot">
+<meta name="apple-mobile-web-app-title" content="PrePlot">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="format-detection" content="telephone=no">
 <style>
@@ -276,7 +276,7 @@ button.btn:active{transform:translateY(1px)}
 <header>
   <div class="hd">
     <div style="flex:1">
-      <h1>Preplot</h1>
+      <h1>PrePlot</h1>
     </div>
     <span class="corechip" id="corechip">core 0/0</span>
   </div>
@@ -323,7 +323,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.13.0";
+var APP_VERSION = "1.14.0";
 var SCHEMA = 3;
 
 /* ============================================================
@@ -1873,7 +1873,7 @@ function photoPackageHTML(){
   var h = '<div class="pkg"><span class="flab">Photo package</span>';
   if(!pkg || pkg.status === "idle"){
     h += '<button type="button" class="btn pri" id="pkgprepare">Prepare photo package</button>' +
-      '<span class="hint">Bundles every survey photo, a designed PDF, the survey data and a photo list into one ZIP.</span>';
+      '<span class="hint">Bundles every survey photo, an interactive report, a designed PDF, the survey data and a photo list into one ZIP.</span>';
   } else if(pkg.status === "preparing"){
     var label;
     if(pkg.phase === "report"){
@@ -2001,13 +2001,16 @@ function preparePhotoPackage(){
   function finishPreparation(){
     if(preparedPhotoPackage !== pkg) return;
     var report = pkg.pendingReport;
+    var html = pkg.pendingHtml;
     pkg.pendingReport = null;
-    if(!report){ failPreparation(); return; }
+    pkg.pendingHtml = null;
+    if(!report || typeof html !== "string"){ failPreparation(); return; }
     try {
       var root = slug();
       var json = JSON.stringify(packageEnvelope(pkg.manifest),null,2);
       var entries = pkg.photoEntries.slice();
       entries.push({name:root + "/" + root + ".pdf",bytes:report.bytes});
+      entries.push({name:root + "/" + root + ".html",bytes:textBytes(html)});
       entries.push({name:root + "/data/survey-export.json",bytes:textBytes(json)});
       entries.push({name:root + "/data/photo-manifest.csv",bytes:photoManifestCSV(pkg.manifest)});
       var archive = zipStore(entries);
@@ -2050,7 +2053,9 @@ function preparePhotoPackage(){
         stalePreparation();
         return;
       }
-      pkg.pendingReport = assemblePdfReport(pkg.manifest,images);
+      var reportModel = buildReportModel(pkg.manifest);
+      pkg.pendingReport = assemblePdfReportModel(reportModel,images);
+      pkg.pendingHtml = buildHtmlReport(reportModel);
       setTimeout(finishPreparation,0);
     }).catch(failPreparation);
   }
@@ -2118,7 +2123,7 @@ function sharePreparedPackage(){
     refreshPhotoPackageUI();
     return false;
   }
-  var shareData = {files:[pkg.file],title:"AVL survey package"};
+  var shareData = {files:[pkg.file],title:"PrePlot survey package"};
   var supported = false;
   try {
     supported = typeof navigator.share === "function" &&
@@ -4064,8 +4069,8 @@ function pdfWriteDocument(doc){
   });
 
   objects[infoRef] = pdfObject(infoRef,[pdfAscii(
-    "<< /Title " + pdfUnicodeHex(doc.title || "Preplot site visit report") +
-    " /Creator " + pdfUnicodeHex("Preplot") + " >>"
+    "<< /Title " + pdfUnicodeHex(doc.title || "PrePlot site visit report") +
+    " /Creator " + pdfUnicodeHex("PrePlot") + " >>"
   )]);
 
   var header = new Uint8Array([
@@ -4530,6 +4535,8 @@ function buildReportModel(manifest){
         ref:entry.ref,
         filename:entry.filename,
         caption:entry.roomName + " \u00b7 " + entry.sectionLabel,
+        roomId:entry.roomId === null ? null : String(entry.roomId),
+        sectionId:entry.sectionId,
         roomName:entry.roomName,
         sectionLabel:entry.sectionLabel
       };
@@ -4672,7 +4679,7 @@ function buildReportDocument(report,images){
   });
   return {
     title:[
-      "Preplot",
+      "PrePlot",
       report.cover.client || "Site visit",
       report.cover.site || "",
       report.cover.date || ""
@@ -4683,7 +4690,229 @@ function buildReportDocument(report,images){
   };
 }
 
+function reportHtmlEsc(value){
+  return String(value === undefined || value === null ? "" : value)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#39;");
+}
+function buildHtmlReport(report){
+  var h = [];
+  var coverPhoto = report.cover.coverPhoto === null
+    ? null
+    : report.photos[report.cover.coverPhoto];
+  var title = [
+    "PrePlot",
+    report.cover.client || "Site visit",
+    report.cover.site,
+    report.cover.date
+  ].filter(answered).join(" \u2014 ");
+  h.push("<!doctype html>");
+  h.push('<html lang="en"><head><meta charset="utf-8">');
+  h.push('<meta name="viewport" content="width=device-width,initial-scale=1">');
+  h.push("<title>" + reportHtmlEsc(title) + "</title>");
+  h.push("<style>");
+  h.push(
+    ":root{--navy:#16283C;--teal:#2C7A7B;--gold:#C8992F;--card:#E9EEF3;" +
+    "--ink:#1A2B3C;--muted:#64748B;--white:#fff}" +
+    "*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#fff;" +
+    "color:var(--ink);font:16px/1.5 Helvetica,Arial,sans-serif}" +
+    "a{color:var(--teal)}.shell{max-width:1180px;margin:0 auto;padding:0 24px 64px}" +
+    ".hero{background:var(--navy);color:#fff}.hero-photo{display:block;width:100%;height:min(52vh,520px);" +
+    "object-fit:cover}.hero-copy{max-width:1180px;margin:0 auto;padding:44px 24px 48px}" +
+    ".rule{width:64px;height:4px;background:var(--gold);margin-bottom:20px}" +
+    ".eyebrow{text-transform:uppercase;letter-spacing:.12em;color:#88c7c7;font-size:.75rem;font-weight:700}" +
+    "h1{font-size:clamp(2.3rem,7vw,4.2rem);line-height:1.02;margin:6px 0 12px}" +
+    ".site{font-size:1.2rem;margin:0 0 22px}.meta{display:flex;gap:18px;flex-wrap:wrap;color:#d8e1ea}" +
+    ".local-note{margin:18px 0 0;color:#d8e1ea;font-size:.9rem}" +
+    "main section{margin-top:48px}.section-title{display:flex;align-items:end;justify-content:space-between;" +
+    "gap:12px;border-bottom:3px solid var(--navy);padding-bottom:10px;margin-bottom:18px}" +
+    "h2{font-size:1.75rem;line-height:1.15;margin:0;color:var(--navy)}h3{margin:0;color:var(--navy)}" +
+    ".count{color:var(--muted);font-size:.85rem}.overview-grid,.room-grid{display:grid;" +
+    "grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}" +
+    ".panel{background:var(--card);border-radius:10px;padding:18px}.number{display:inline-grid;" +
+    "place-items:center;width:30px;height:30px;border-radius:50%;background:var(--teal);color:#fff;" +
+    "font-weight:700;margin-bottom:12px}.panel p{margin:8px 0 0;white-space:pre-wrap}" +
+    ".room{border:1px solid #d6dee7;border-radius:12px;overflow:hidden;margin:24px 0}" +
+    ".room-head{background:var(--navy);color:#fff;padding:16px 20px}.room-head h3{color:#fff;font-size:1.35rem}" +
+    ".room-body{padding:18px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));" +
+    "gap:10px;margin-bottom:18px}.stat{background:var(--card);border-radius:9px;padding:14px}" +
+    ".stat-label{text-transform:uppercase;letter-spacing:.06em;color:var(--teal);font-size:.7rem;font-weight:700}" +
+    ".stat-value{font-size:1.45rem;font-weight:700;color:var(--navy);margin:4px 0}" +
+    ".qualifier{font-size:.75rem;color:var(--muted)}.data-table{width:100%;border-collapse:collapse;" +
+    "margin:12px 0}.data-table th,.data-table td{text-align:left;vertical-align:top;padding:9px 10px}" +
+    ".data-table tr:nth-child(odd){background:var(--card)}.data-table th{width:42%;color:var(--muted);" +
+    "font-size:.78rem}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}" +
+    ".info{border:1px solid #cfd9e3;border-radius:9px;overflow:hidden}.info h4{margin:0;padding:9px 12px;" +
+    "background:var(--teal);color:#fff;text-transform:uppercase;letter-spacing:.06em;font-size:.75rem}" +
+    ".info ul{margin:0;padding:12px 14px 12px 30px}.info li+li{margin-top:8px}" +
+    ".photo-links{margin:16px 0 0}.photo-links a{display:inline-block;margin:4px 8px 0 0;font-weight:700}" +
+    ".photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}" +
+    ".photo-card{border:1px solid #d6dee7;border-radius:10px;overflow:hidden;background:#fff;" +
+    "scroll-margin-top:18px}.photo-open{display:block;width:100%;padding:0;border:0;background:#101923;" +
+    "cursor:zoom-in}.photo-open:focus-visible{outline:4px solid var(--gold);outline-offset:-4px}" +
+    ".photo-open img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}.photo-copy{padding:12px 14px}" +
+    ".photo-line{display:flex;gap:12px;justify-content:space-between;align-items:baseline}" +
+    ".photo-ref{font-weight:700;color:var(--teal);white-space:nowrap}.filename{font-size:.75rem;color:var(--muted);" +
+    "overflow-wrap:anywhere;text-align:right}.caption{margin:6px 0 0;color:var(--ink)}" +
+    ".viewer[hidden]{display:none}.viewer{position:fixed;inset:0;z-index:1000;background:rgba(8,16,26,.96);" +
+    "display:grid;grid-template-rows:auto 1fr auto;color:#fff}.viewer-bar{display:flex;align-items:center;" +
+    "gap:12px;padding:12px 16px}.viewer-title{flex:1;min-width:0}.viewer-title strong,.viewer-title span{" +
+    "display:block}.viewer-title span{color:#b9c5d1;font-size:.8rem;overflow-wrap:anywhere}" +
+    ".viewer-close{border:1px solid #64748B;border-radius:999px;background:transparent;color:#fff;" +
+    "font:inherit;padding:8px 14px;cursor:pointer}.viewer-stage{min-height:0;display:grid;place-items:center;" +
+    "padding:0 16px}.viewer-stage img{display:block;max-width:100%;max-height:100%;object-fit:contain}" +
+    ".viewer-caption{padding:12px 16px 18px;text-align:center;color:#d8e1ea}" +
+    "@media(max-width:620px){.shell{padding-left:14px;padding-right:14px}.hero-copy{padding:32px 18px 38px}" +
+    ".data-table th{width:38%}.photos{grid-template-columns:1fr 1fr;gap:10px}.photo-copy{padding:10px}" +
+    ".photo-line{display:block}.filename{text-align:left;display:block;margin-top:2px}}" +
+    "@media(max-width:390px){.photos{grid-template-columns:1fr}}" +
+    "@media print{.viewer{display:none!important}}"
+  );
+  h.push("</style></head><body>");
+  h.push('<header class="hero">');
+  if(coverPhoto){
+    h.push('<img class="hero-photo" src="photos/' + reportHtmlEsc(coverPhoto.filename) +
+      '" alt="Cover photograph">');
+  }
+  h.push('<div class="hero-copy"><div class="rule"></div><div class="eyebrow">PrePlot site visit report</div>');
+  h.push("<h1>" + reportHtmlEsc(report.cover.client || "Site visit") + "</h1>");
+  if(report.cover.site) h.push('<p class="site">' + reportHtmlEsc(report.cover.site) + "</p>");
+  h.push('<div class="meta"><span>' + reportHtmlEsc(report.cover.date) + "</span><span>" +
+    reportHtmlEsc(report.cover.surveyor) + "</span><span>" + report.cover.photoCount +
+    " photograph" + (report.cover.photoCount === 1 ? "" : "s") + "</span></div>");
+  h.push('<p class="local-note">Photos load from the photos folder beside this file.</p></div></header>');
+  h.push('<main class="shell">');
 
+  if(report.overview.length){
+    h.push('<section><div class="section-title"><h2>Visit overview</h2><span class="count">' +
+      report.overview.length + " field note" + (report.overview.length === 1 ? "" : "s") +
+      '</span></div><div class="overview-grid">');
+    report.overview.forEach(function(item,index){
+      h.push('<article class="panel"><span class="number">' + (index+1) + "</span><h3>" +
+        reportHtmlEsc(item.title) + "</h3><p>" + reportHtmlEsc(item.body) + "</p></article>");
+    });
+    h.push("</div></section>");
+  }
+
+  if(report.rooms.length){
+    h.push('<section><div class="section-title"><h2>Rooms</h2><span class="count">' +
+      report.rooms.length + " room" + (report.rooms.length === 1 ? "" : "s") + "</span></div>");
+    report.rooms.forEach(function(room){
+      var roomPhotos = report.photos.filter(function(photo){ return photo.roomId === room.id; });
+      h.push('<article class="room"><div class="room-head"><h3>' + reportHtmlEsc(room.title) +
+        '</h3></div><div class="room-body">');
+      if(room.stats.length){
+        h.push('<div class="stats">');
+        room.stats.forEach(function(stat){
+          h.push('<div class="stat"><div class="stat-label">' + reportHtmlEsc(stat.label) +
+            '</div><div class="stat-value">' + reportHtmlEsc(stat.value) +
+            '</div><div class="qualifier">' + reportHtmlEsc(stat.qualifier) + "</div></div>");
+        });
+        h.push("</div>");
+      }
+      if(room.rows.length){
+        h.push('<table class="data-table"><tbody>');
+        room.rows.forEach(function(row){
+          h.push("<tr><th>" + reportHtmlEsc(row.label) + "</th><td>" +
+            reportHtmlEsc(row.value) + "</td></tr>");
+        });
+        h.push("</tbody></table>");
+      }
+      h.push('<div class="cards">');
+      room.cards.forEach(function(info){
+        h.push('<section class="info"><h4>' + reportHtmlEsc(info.header) + "</h4>");
+        if(info.bullets.length){
+          h.push("<ul>");
+          info.bullets.forEach(function(bullet){
+            h.push("<li><strong>" + reportHtmlEsc(bullet.label) + ":</strong> " +
+              reportHtmlEsc(bullet.value) + "</li>");
+          });
+          h.push("</ul>");
+        } else {
+          h.push("<ul><li>None recorded</li></ul>");
+        }
+        h.push("</section>");
+      });
+      h.push("</div>");
+      if(roomPhotos.length){
+        h.push('<p class="photo-links"><strong>Room photographs:</strong> ');
+        roomPhotos.forEach(function(photo){
+          h.push('<a href="#photo-' + reportHtmlEsc(photo.ref) + '">Photo ' +
+            reportHtmlEsc(photo.ref) + "</a>");
+        });
+        h.push("</p>");
+      }
+      h.push("</div></article>");
+    });
+    h.push("</section>");
+  }
+
+  h.push('<section><div class="section-title"><h2>Photographic record</h2><span class="count">' +
+    report.photos.length + " photograph" + (report.photos.length === 1 ? "" : "s") + "</span></div>");
+  if(report.photos.length){
+    h.push('<div class="photos">');
+    report.photos.forEach(function(photo,index){
+      var path = "photos/" + photo.filename;
+      h.push('<article class="photo-card" id="photo-' + reportHtmlEsc(photo.ref) +
+        '" data-ref="' + reportHtmlEsc(photo.ref) + '" data-filename="' +
+        reportHtmlEsc(photo.filename) + '" data-caption="' + reportHtmlEsc(photo.caption) + '">');
+      h.push('<button type="button" class="photo-open" data-photo-index="' + index +
+        '" data-src="' + reportHtmlEsc(path) + '" aria-label="Open photo ' +
+        reportHtmlEsc(photo.ref) + ', ' + reportHtmlEsc(photo.caption) + '">');
+      h.push('<img src="' + reportHtmlEsc(path) + '" loading="lazy" alt=""></button>');
+      h.push('<div class="photo-copy"><div class="photo-line"><span class="photo-ref">PHOTO ' +
+        reportHtmlEsc(photo.ref) + '</span><span class="filename">' +
+        reportHtmlEsc(photo.filename) + '</span></div><p class="caption">' +
+        reportHtmlEsc(photo.caption) + "</p></div></article>");
+    });
+    h.push("</div>");
+  } else {
+    h.push('<p class="count">No photographs recorded.</p>');
+  }
+  h.push("</section></main>");
+  h.push(
+    '<div class="viewer" id="viewer" hidden aria-hidden="true" role="dialog" aria-modal="true" ' +
+    'aria-labelledby="viewer-ref"><div class="viewer-bar"><div class="viewer-title">' +
+    '<strong id="viewer-ref"></strong><span id="viewer-file"></span></div>' +
+    '<button type="button" class="viewer-close" id="viewer-close">Close</button></div>' +
+    '<div class="viewer-stage" id="viewer-stage"><img id="viewer-image" alt=""></div>' +
+    '<div class="viewer-caption" id="viewer-caption"></div></div>'
+  );
+  h.push("<script>");
+  h.push(
+    "(function(){" +
+    "var buttons=[].slice.call(document.querySelectorAll('.photo-open'));" +
+    "var viewer=document.getElementById('viewer');var image=document.getElementById('viewer-image');" +
+    "var ref=document.getElementById('viewer-ref');var file=document.getElementById('viewer-file');" +
+    "var caption=document.getElementById('viewer-caption');var closeButton=document.getElementById('viewer-close');" +
+    "var current=-1;var opener=null;var scrollY=0;var touchX=null;" +
+    "function show(index){if(!buttons.length)return;current=(index+buttons.length)%buttons.length;" +
+    "var button=buttons[current];var card=button.closest('.photo-card');opener=opener||button;" +
+    "image.src=button.getAttribute('data-src');image.alt='Photo '+card.getAttribute('data-ref')+', '+card.getAttribute('data-caption');" +
+    "ref.textContent='PHOTO '+card.getAttribute('data-ref');file.textContent=card.getAttribute('data-filename');" +
+    "caption.textContent=card.getAttribute('data-caption');viewer.hidden=false;viewer.setAttribute('aria-hidden','false');" +
+    "closeButton.focus();}" +
+    "function open(index,button){opener=button;scrollY=window.pageYOffset||0;document.body.style.position='fixed';" +
+    "document.body.style.top=(-scrollY)+'px';document.body.style.width='100%';show(index);}" +
+    "function close(){if(viewer.hidden)return;viewer.hidden=true;viewer.setAttribute('aria-hidden','true');image.removeAttribute('src');" +
+    "document.body.style.position='';document.body.style.top='';document.body.style.width='';window.scrollTo(0,scrollY);" +
+    "var target=opener;opener=null;current=-1;if(target)target.focus();}" +
+    "buttons.forEach(function(button,index){button.addEventListener('click',function(){open(index,button);});});" +
+    "closeButton.addEventListener('click',close);viewer.addEventListener('click',function(event){" +
+    "if(event.target===viewer||event.target.id==='viewer-stage')close();});" +
+    "document.addEventListener('keydown',function(event){if(viewer.hidden)return;if(event.key==='Escape')close();" +
+    "else if(event.key==='ArrowRight')show(current+1);else if(event.key==='ArrowLeft')show(current-1);});" +
+    "viewer.addEventListener('touchstart',function(event){touchX=event.touches.length?event.touches[0].clientX:null;},{passive:true});" +
+    "viewer.addEventListener('touchend',function(event){if(touchX===null||!event.changedTouches.length)return;" +
+    "var delta=event.changedTouches[0].clientX-touchX;touchX=null;if(Math.abs(delta)<45)return;show(current+(delta<0?1:-1));},{passive:true});" +
+    "})();"
+  );
+  h.push("<\/script></body></html>");
+  return h.join("");
+}
 
 function disp(v){
   if(Array.isArray(v)) return v.join(", ");
@@ -5061,6 +5290,7 @@ window.__avl = {
   pdfJpegDimensions:pdfJpegDimensions,
   pdfWriteDocument:pdfWriteDocument,
   buildReportModel:buildReportModel,
+  buildHtmlReport:buildHtmlReport,
   buildReportDocument:buildReportDocument,
   preparePdfRenditions:preparePdfRenditions,
   assemblePdfReportModel:assemblePdfReportModel,

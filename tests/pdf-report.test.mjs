@@ -186,7 +186,7 @@ test("designed report is structurally valid, mixed-orientation and text-traceabl
       await writeFile(pdf,Buffer.from(result.bytes));
       var info = await execFile("pdfinfo",[pdf]);
       assert.match(info.stdout,/Pages:\s+6/);
-      assert.match(info.stdout,/Title:\s+Preplot — Müller AV — Café Bâtiment — 2026-07-30/);
+      assert.match(info.stdout,/Title:\s+PrePlot — Müller AV — Café Bâtiment — 2026-07-30/);
 
       var qpdf = await optionalTool(t,"qpdf",["--check",pdf]);
       if(qpdf) assert.match(qpdf.stdout + qpdf.stderr,/No syntax or stream encoding errors found/);
