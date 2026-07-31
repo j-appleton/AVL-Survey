@@ -318,7 +318,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.10.1";
+var APP_VERSION = "1.11.0";
 var SCHEMA = 3;
 
 /* ============================================================
@@ -1773,6 +1773,7 @@ function packageEnvelope(manifest){
     app:"avl-survey",
     schema:SCHEMA,
     photoFormat:"archive",
+    pathBase:"archive-root",
     appVersion:APP_VERSION,
     exportedAt:nowISO(),
     data:data
@@ -1983,10 +1984,11 @@ function preparePhotoPackage(){
   function finishPreparation(){
     if(preparedPhotoPackage !== pkg) return;
     try {
+      var root = slug();
       var json = JSON.stringify(packageEnvelope(pkg.manifest),null,2);
       var entries = pkg.photoEntries.slice();
-      entries.push({name:"survey-export.json",bytes:textBytes(json)});
-      entries.push({name:"photo-manifest.csv",bytes:photoManifestCSV(pkg.manifest)});
+      entries.push({name:root + "/data/survey-export.json",bytes:textBytes(json)});
+      entries.push({name:root + "/data/photo-manifest.csv",bytes:photoManifestCSV(pkg.manifest)});
       var archive = zipStore(entries);
       pkg.file = new File(
         [archive],
@@ -2024,7 +2026,7 @@ function preparePhotoPackage(){
         return;
       }
       pkg.photoEntries.push({
-        name:"photos/" + entry.filename,
+        name:slug() + "/photos/" + entry.filename,
         bytes:source.bytes
       });
       index++;
@@ -3723,8 +3725,15 @@ function buildPrintNow(){
 
   document.getElementById("print").innerHTML = h;
   setTimeout(function(){
+    /* Temporary: the generated-PDF writer replaces this print path and names
+       the File itself. Until then iOS derives the PDF filename from the title. */
+    var oldTitle = document.title;
+    document.title = "Preplot \u2014 " + (S.visit.client || "\u2014") +
+      " \u2014 " + (S.visit.site || "\u2014") +
+      " \u2014 " + (S.visit.date || "\u2014");
     try { window.print(); }
     catch(e){ toast("Printing blocked here — open the file in your browser"); }
+    finally { document.title = oldTitle; }
   }, 120);
 }
 function buildPrint(){
