@@ -356,9 +356,8 @@ test("capture stays in Photos and the stored photo remains manually shareable", 
   await withPhotoApp({photo:null}, async function(page){
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="60">' +
       '<rect width="40" height="60" fill="purple"/></svg>';
-    await page.selectOption('[data-photo-add-select="1"]',"1|notes");
     var chooserPromise = page.waitForEvent("filechooser");
-    await page.locator('[data-add-room-photos="1"]').click();
+    await page.locator('[data-photos="1|notes"] [data-addph]').click();
     var chooser = await chooserPromise;
     await chooser.setFiles({
       name:"portrait.svg",
@@ -456,9 +455,8 @@ test("a storage-full capture stays shareable through a persistent section notice
 
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="50">' +
       '<rect width="30" height="50" fill="orange"/></svg>';
-    await page.selectOption('[data-photo-add-select="1"]',"1|notes");
     var chooserPromise = page.waitForEvent("filechooser");
-    await page.locator('[data-add-room-photos="1"]').click();
+    await page.locator('[data-photos="1|notes"] [data-addph]').click();
     var chooser = await chooserPromise;
     await chooser.setFiles({
       name:"storage-full.svg",

@@ -157,12 +157,11 @@ button.btn:active{transform:translateY(1px)}
 .phrecovery-actions button{background:var(--card)}
 .photosview .photo-group{padding:2px 14px 14px;border-top:1px solid var(--line)}
 .photosview .photo-group:first-child{border-top:0}
-.photosview .photo-group-title{font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 4px}
-.photosview .photo-add-row{
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 14px 14px
+.photosview .photo-group-title{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 4px
 }
-.photosview .photo-add-row label{font-size:12px;font-weight:650;color:var(--muted)}
-.photosview .photo-add-row select{flex:1;min-width:160px;padding:8px 10px;font-size:14px}
+.photosview .photo-group-count{font-size:10px;font-weight:600;white-space:nowrap;opacity:.8}
 .photosview .site-photo-card .roomhd{background:var(--card)}
 .cover-card{padding:16px;margin-bottom:12px}
 .cover-card h2{margin:0;font-size:18px;color:var(--ink)}
@@ -346,7 +345,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.16.0";
+var APP_VERSION = "1.16.1";
 var SCHEMA = 3;
 
 /* ============================================================
@@ -2920,7 +2919,7 @@ function fieldsHTML(scope, fields){
 /* ---------- photo strip ---------- */
 function photosHTML(key){
   var list = photoList(key);
-  return '<div class="f"><span class="flab">Photos</span>' + photoCaptureRecoveryHTML(key) +
+  return '<div class="f">' + photoCaptureRecoveryHTML(key) +
     '<div class="photos" data-photos="'+esc(key)+'">' +
     list.map(function(p,i){
       var label = "Delete photo " + (i + 1) + " of " + list.length;
@@ -3106,7 +3105,6 @@ function updateProgress(){
    RENDER
    ============================================================ */
 var currentAppView = "survey";
-var photoRoomOpen = {};
 var coverSelectMode = false;
 var coverCandidate = "";
 
@@ -3241,42 +3239,31 @@ function groupedPhotoManifest(){
   return {manifest:manifest,groups:groups};
 }
 
-function roomPhotoAddHTML(room, used){
-  var available = ROOM_SECTIONS.filter(function(section){
-    return !used[section.id];
-  });
-  if(!available.length) return "";
-  return '<div class="photo-add-row">' +
-    '<label for="photoadd-'+esc(room.id)+'">Add photos to</label>' +
-    '<select id="photoadd-'+esc(room.id)+'" data-photo-add-select="'+esc(room.id)+'">' +
-      available.map(function(section){
-        return '<option value="'+esc(room.id+"|"+section.id)+'">'+esc(section.title)+'</option>';
-      }).join("") +
-    '</select>' +
-    '<button type="button" class="btn sm" data-add-room-photos="'+esc(room.id)+'">+ Photo</button>' +
+function photoChecklistGroupHTML(key,title){
+  var count = photoList(key).length;
+  return '<div class="photo-group" data-photo-group="'+esc(key)+'">' +
+    '<div class="photo-group-title"><span>'+esc(title)+'</span>' +
+    '<span class="photo-group-count">'+count+' photo'+(count === 1 ? '' : 's')+'</span></div>' +
+    photosHTML(key) +
     '</div>';
 }
 
 function photoRoomCardHTML(room, groups){
   var roomId = String(room.id);
-  var open = photoRoomOpen[roomId] !== false;
-  var used = {};
+  var declared = {};
   var inner = "";
-  groups.forEach(function(group){
-    used[group.sectionId] = true;
-    inner += '<div class="photo-group" data-photo-group="'+esc(group.key)+'">' +
-      '<div class="photo-group-title">'+esc(group.sectionLabel)+'</div>' +
-      photosHTML(group.key) +
-      '</div>';
+  ROOM_SECTIONS.forEach(function(section){
+    declared[section.id] = true;
+    inner += photoChecklistGroupHTML(roomId+"|"+section.id,section.title);
   });
-  inner += roomPhotoAddHTML(room,used);
-  return '<div class="card sec'+(open ? ' open' : '')+'" data-photo-room="'+esc(roomId)+'">' +
-    '<button type="button" class="sechd" data-photo-room-toggle="'+esc(roomId)+'">' +
-      '<span class="car">&#9656;</span>' +
-      '<span class="t">'+esc((room.d && room.d.name) || ("Room " + roomId))+'</span>' +
-      '<span class="cnt">'+groups.reduce(function(total,group){ return total + group.entries.length; },0)+' photos</span>' +
-    '</button>' +
-    '<div class="secbody">'+inner+'</div>' +
+  groups.forEach(function(group){
+    if(declared[group.sectionId]) return;
+    inner += photoChecklistGroupHTML(group.key,group.sectionLabel);
+  });
+  return '<div class="card" data-photo-room="'+esc(roomId)+'">' +
+    '<div class="roomhd"><span class="nm">'+esc((room.d && room.d.name) || ("Room " + roomId))+'</span>' +
+      '<span class="pct">'+groups.reduce(function(total,group){ return total + group.entries.length; },0)+' photos</span></div>' +
+    inner +
     '</div>';
 }
 
@@ -3291,19 +3278,11 @@ function photosViewHTML(){
   h += '<div class="card site-photo-card">' +
     '<div class="roomhd"><span class="nm">'+esc((S.visit && S.visit.site) || "Site")+'</span>' +
     '<span class="pct">'+siteGroups.reduce(function(total,group){ return total + group.entries.length; },0)+' photos</span></div>';
-  if(siteGroups.length){
-    siteGroups.forEach(function(group){
-      h += '<div class="photo-group" data-photo-group="'+esc(group.key)+'">' +
-        '<div class="photo-group-title">'+esc(group.sectionLabel)+'</div>' +
-        photosHTML(group.key) +
-        '</div>';
-    });
-  } else {
-    h += '<div class="photo-group" data-photo-group="log|main">' +
-      '<div class="photo-group-title">Site logistics &amp; access</div>' +
-      photosHTML("log|main") +
-      '</div>';
-  }
+  h += photoChecklistGroupHTML("log|main","Site logistics & access");
+  siteGroups.forEach(function(group){
+    if(group.key === "log|main") return;
+    h += photoChecklistGroupHTML(group.key,group.sectionLabel);
+  });
   h += '</div>';
   S.rooms.forEach(function(room){
     var roomGroups = grouped.groups.filter(function(group){
@@ -3373,21 +3352,6 @@ document.addEventListener("click", function(e){
 
   if(t.hasAttribute && t.hasAttribute("data-app-view")){
     switchAppView(t.getAttribute("data-app-view"));
-    return;
-  }
-
-  if(t.hasAttribute && t.hasAttribute("data-photo-room-toggle")){
-    var photoRoomId = t.getAttribute("data-photo-room-toggle");
-    photoRoomOpen[photoRoomId] = photoRoomOpen[photoRoomId] === false;
-    render();
-    return;
-  }
-
-  if(t.hasAttribute && t.hasAttribute("data-add-room-photos")){
-    var photoRoomSelect = document.querySelector(
-      '[data-photo-add-select="' + CSS.escape(t.getAttribute("data-add-room-photos")) + '"]'
-    );
-    if(photoRoomSelect && photoRoomSelect.value) pickPhoto(photoRoomSelect.value);
     return;
   }
 

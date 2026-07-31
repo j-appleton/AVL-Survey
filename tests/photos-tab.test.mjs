@@ -97,6 +97,41 @@ test("sticky Photos view follows the canonical manifest without entering survey 
   });
 });
 
+test("Photos exposes every room section as a direct capture checklist", async function(){
+  await withPhotosApp(async function(page){
+    await page.locator('[data-app-view="photos"]').click();
+    var result = await page.evaluate(function(){
+      var room = document.querySelector('[data-photo-room="1"]');
+      return {
+        expected:window.__avl.ROOM_SECTIONS.map(function(section){
+          return {
+            key:"1|" + section.id,
+            title:section.title
+          };
+        }),
+        actual:Array.prototype.map.call(
+          room.querySelectorAll("[data-photo-group]"),
+          function(group){
+            return {
+              key:group.getAttribute("data-photo-group"),
+              title:group.querySelector(".photo-group-title span").textContent
+            };
+          }
+        ),
+        directAdds:room.querySelectorAll("[data-photos] [data-addph]").length,
+        selectors:document.querySelectorAll("[data-photo-add-select],[data-add-room-photos]").length,
+        roomToggle:document.querySelectorAll("[data-photo-room-toggle]").length,
+        site:!!document.querySelector('[data-photo-group="log|main"] [data-addph]')
+      };
+    });
+    assert.deepEqual(result.actual,result.expected);
+    assert.equal(result.directAdds,result.expected.length);
+    assert.equal(result.selectors,0);
+    assert.equal(result.roomToggle,0);
+    assert.equal(result.site,true);
+  });
+});
+
 test("recovery notices live only with photos and delete state clears on view switch", async function(){
   await withPhotosApp(async function(page){
     var result = await page.evaluate(async function(){
@@ -160,8 +195,7 @@ test("viewer navigation and focus restoration work from the Photos view", async 
 test("capture started from the Photos view writes to the chosen empty section", async function(){
   await withPhotosApp(async function(page){
     await page.locator('[data-app-view="photos"]').click();
-    await page.selectOption('[data-photo-add-select="1"]',"1|dims");
-    await page.locator('[data-add-room-photos="1"]').click();
+    await page.locator('[data-photos="1|dims"] [data-addph]').click();
     var png = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLJ9QAAAABJRU5ErkJggg==",
       "base64"
