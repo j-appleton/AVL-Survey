@@ -97,7 +97,7 @@ test("sticky Photos view follows the canonical manifest without entering survey 
   });
 });
 
-test("recovery notices and deliberate delete state behave the same in both views", async function(){
+test("recovery notices live only with photos and delete state clears on view switch", async function(){
   await withPhotosApp(async function(page){
     var result = await page.evaluate(async function(){
       window.AVLPhotoStore.addDataUrl = function(){
@@ -117,11 +117,12 @@ test("recovery notices and deliberate delete state behave the same in both views
         Storage.prototype.setItem = realSet;
       }
       var surveyNotice = !!document.querySelector("[data-photo-recovery='1|notes']");
+      window.__avl.switchAppView("photos");
+      var photoNotice = !!document.querySelector("[data-photo-recovery='1|notes']");
       var del = document.querySelector('[data-photos="1|audio"] [data-delph="0"]');
       del.click();
       var armedBefore = del.getAttribute("data-armed");
-      window.__avl.switchAppView("photos");
-      var photoNotice = !!document.querySelector("[data-photo-recovery='1|notes']");
+      window.__avl.switchAppView("survey");
       var armedAfter = document.querySelectorAll(".phdel[data-armed='1']").length;
       return {
         surveyNotice:surveyNotice,
@@ -130,7 +131,7 @@ test("recovery notices and deliberate delete state behave the same in both views
         armedAfter:armedAfter
       };
     });
-    assert.equal(result.surveyNotice,true);
+    assert.equal(result.surveyNotice,false);
     assert.equal(result.photoNotice,true);
     assert.equal(result.armedBefore,"1");
     assert.equal(result.armedAfter,0);

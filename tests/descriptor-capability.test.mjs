@@ -142,6 +142,7 @@ test("concurrent thumbnail, viewer and package reads share one IndexedDB request
         return new Promise(function(resolve){ window.__storedRead.resolve = resolve; });
       };
       await window.__avl.setDescriptorStateForTest(input.state);
+      window.__avl.switchAppView("photos");
       window.__avl.openPhotoViewer("1|notes",0);
       window.__packageRead = window.__avl.readPhotoSource(window.__avl.photoManifest()[0]);
       return window.__storedReadCalls;
@@ -193,6 +194,7 @@ test("late stored reads cannot paint a replaced thumbnail or viewer photo", asyn
         return new Promise(function(resolve){ window.__reads[id] = resolve; });
       };
       await window.__avl.setDescriptorStateForTest(input.aState);
+      window.__avl.switchAppView("photos");
       window.__lateHydration = window.__avl.hydratePhotoSource("1|notes",0);
       window.__avl.openPhotoViewer("1|notes",0);
       window.__avl.S().photos["1|notes"][0] = input.b;
@@ -259,6 +261,7 @@ test("missing records are explicit and block viewer actions, package preparation
     var before = await page.evaluate(async function(state){
       window.AVLPhotoStore.keys = function(){ return Promise.resolve([]); };
       await window.__avl.setDescriptorStateForTest(state);
+      window.__avl.switchAppView("photos");
       return JSON.stringify(window.__avl.S());
     },stateWithPhotos(missing,true));
 
@@ -344,6 +347,7 @@ test("deleting a photo strands no backup: records survive and restore byte-exact
     await page.evaluate(async function(state){
       await window.__avl.setDescriptorStateForTest(state);
       window.__avl.snapshot();
+      window.__avl.switchAppView("photos");
     }, stateWithPhotos([
       descriptor("kept-a","image/jpeg",A_BYTES.length,900,675),
       descriptor("kept-b","image/png",B_BYTES.length,640,480)
@@ -466,26 +470,19 @@ test("a descriptor-backed package extracts exact bytes without duplicating them 
   });
 });
 
-test("portable v3 export is byte-exact, carries no IDs and production import assigns fresh IDs", async function(){
+test("the package's portable payload is byte-exact, carries no IDs and production import assigns fresh IDs", async function(){
   await withApp(async function(page){
     await addRecord(page,"original-a","image/jpeg",A_BYTES,900,675);
     var current = descriptor("original-a","image/jpeg",A_BYTES.length,900,675);
     var exported = await page.evaluate(async function(state){
       await window.__avl.setDescriptorStateForTest(state);
       var portable = await window.__avl.portableEnvelope();
-      var buttonExport = await window.__avl.exportJSON();
-      return {
-        portable:portable,
-        buttonSchema:buttonExport && buttonExport.schema,
-        buttonFormat:buttonExport && buttonExport.photoFormat
-      };
+      return {portable:portable};
     },stateWithPhotos([current,B_DATA],false));
     var portable = exported.portable;
 
     assert.equal(portable.schema,3);
     assert.equal(portable.photoFormat,"inline");
-    assert.equal(exported.buttonSchema,3);
-    assert.equal(exported.buttonFormat,"inline");
     assert.deepEqual(
       portable.data.photos["1|notes"].map(function(entry){
         return Array.from(Buffer.from(entry.data.split(",")[1],"base64"));
@@ -645,7 +642,7 @@ test("bare schema-3 descriptors are rejected whole with the portable-export inst
     assert.equal(result.ok,false);
     assert.equal(
       result.toast,
-      "Not imported: This file lists photos that are stored on the device it came from. Export again from that device."
+      "Not imported: This file lists photos that are stored on another device. Import a full PrePlot package from that device."
     );
     assert.equal(await surveyStateSnapshot(page),before);
 
@@ -681,7 +678,7 @@ test("bare schema-3 descriptors are rejected whole with the portable-export inst
     assert.equal(disguisedV2.ok,false);
     assert.equal(
       disguisedV2.toast,
-      "Not imported: This file lists photos that are stored on the device it came from. Export again from that device."
+      "Not imported: This file lists photos that are stored on another device. Import a full PrePlot package from that device."
     );
     assert.equal(await surveyStateSnapshot(page),before);
   });

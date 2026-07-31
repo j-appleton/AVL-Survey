@@ -68,6 +68,7 @@ async function withPhotoApp(options, run){
       }));
     }, options.photo === undefined ? EXACT_PHOTO : options.photo);
     assert.equal(imported, true);
+    await page.evaluate(function(){ window.__avl.switchAppView("photos"); });
     if(options.offline) await context.setOffline(true);
     await run(page);
     await context.close();
@@ -351,12 +352,13 @@ test("Save photo prepares the local File and opens the native share path offline
   });
 });
 
-test("capture stays in the survey and the stored photo remains manually shareable", async function(){
+test("capture stays in Photos and the stored photo remains manually shareable", async function(){
   await withPhotoApp({photo:null}, async function(page){
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="60">' +
       '<rect width="40" height="60" fill="purple"/></svg>';
+    await page.selectOption('[data-photo-add-select="1"]',"1|notes");
     var chooserPromise = page.waitForEvent("filechooser");
-    await page.locator('[data-photos="1|notes"] [data-addph]').click();
+    await page.locator('[data-add-room-photos="1"]').click();
     var chooser = await chooserPromise;
     await chooser.setFiles({
       name:"portrait.svg",
@@ -454,8 +456,9 @@ test("a storage-full capture stays shareable through a persistent section notice
 
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="50">' +
       '<rect width="30" height="50" fill="orange"/></svg>';
+    await page.selectOption('[data-photo-add-select="1"]',"1|notes");
     var chooserPromise = page.waitForEvent("filechooser");
-    await page.locator('[data-photos="1|notes"] [data-addph]').click();
+    await page.locator('[data-add-room-photos="1"]').click();
     var chooser = await chooserPromise;
     await chooser.setFiles({
       name:"storage-full.svg",
@@ -481,11 +484,14 @@ test("a storage-full capture stays shareable through a persistent section notice
     assert.equal(result.viewer, false, "storage failure must not interrupt a capture batch");
     assert.equal(result.notices, 1);
     assert.match(result.notice, /in device storage but could not be added to the survey/i);
-    assert.match(result.notice, /Export or save it before leaving this page/i);
+    assert.match(result.notice, /Prepare the visit package or save it before leaving this page/i);
     assert.equal(result.dismiss, 0, "the recovery notice must not be dismissible");
     assert.equal(result.shareCalls, 0);
 
-    await page.locator('[data-toggle="visit|main"]').click();
+    await page.evaluate(function(){
+      window.__avl.switchAppView("survey");
+      window.__avl.switchAppView("photos");
+    });
     assert.equal(
       await page.locator('[data-photo-recovery="1|notes"]').count(),
       1,

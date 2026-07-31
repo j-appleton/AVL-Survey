@@ -2,7 +2,7 @@
 
 PrePlot is a pre-install AV site survey app. It runs entirely in the browser, works offline,
 stores everything on your phone. No accounts or backend; data leaves the device
-only when you explicitly export or share it.
+only when you explicitly prepare and share the complete package.
 
 ## Why it needs hosting
 
@@ -62,14 +62,17 @@ it works with no signal — the service worker caches everything on first load.
 - The **core** counter in the header tracks the small subset worth chasing before
   you leave site. Everything else is optional.
 - **+ Room** adds a space; **Duplicate** clones one for near-identical rooms.
-- **Export data** downloads a versioned JSON backup. **Import** accepts a complete
-  PrePlot ZIP package or an older JSON backup, validates it before touching the
-  current survey, and upgrades older data when needed. **Show raw data** is the
-  fallback if a download is ever blocked.
+- **Restore from package** accepts a complete PrePlot ZIP package or an older
+  JSON backup, validates it before touching the current survey, and upgrades
+  older data when needed.
 - Importing over work and clearing a survey create a recoverable snapshot.
   **Restore backup** appears whenever one is available.
-- Tap any photo thumbnail to inspect the full stored survey image without the
+- Photos, capture controls, and recovery notices live in the dedicated
+  **Photos** tab. Tap any thumbnail to inspect the full stored survey image without the
   thumbnail crop, then move through the other photos in that section.
+- The top of the Photos tab makes the report cover an explicit decision. Choose
+  a photo there or from the full-screen viewer; without one, the PDF uses a
+  deliberate plain navy cover rather than silently taking the first photo.
 - After capture, the app stays in the survey and reports the batch once. Tap any
   thumbnail when you want the full viewer, then tap **Save photo…** to open the
   device share sheet and choose **Save Image** on iPhone or **Photos / Gallery**
@@ -82,18 +85,19 @@ it works with no signal — the service worker caches everything on first load.
   before they are reported as added. If survey storage rejects a batch, a
   persistent notice stays above that section's thumbnails with a manual Save
   action for every in-memory image.
-- At the end of a visit, open **Data & storage** and choose
-  **Prepare photo package**. The app builds one ZIP containing every stored
+- At the end of a visit, tap **Package** and choose
+  **Prepare complete package**. The app builds one ZIP containing every stored
   survey photo under its handoff filename, compact survey JSON that references
-  those packaged photo files, an Excel-friendly photo manifest, a designed
+  those packaged photo files, an Excel-friendly photo manifest, a plain-text
+  CRM note containing every survey field, a designed
   site-visit PDF, and a searchable interactive HTML report whose thumbnails
   open the matching full-resolution files from the adjacent `photos` folder.
   The complete ZIP can be imported back into PrePlot as the survey backup.
   **Share package…** opens the device share
   sheet for Google Drive; **Download package instead** is always available.
   The app cannot verify either destination, so it tells you to confirm the file
-  in Drive or Files and never claims that it was uploaded or saved.
-- **PDF** builds and downloads the same designed report included in the ZIP.
+  in Drive or Files and never claims that it was uploaded or saved. This ZIP is
+  the app's only outward report or backup handoff.
 
 ### Ambient light
 
@@ -118,7 +122,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v22";  // bump this for every runtime change
+var CACHE = "avl-survey-v23";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -221,7 +225,8 @@ GitHub Actions runs the same test for pull requests and pushes to `main`.
 ## Data safety
 
 Everything lives in your phone's browser storage. Clearing Safari website data,
-or deleting the home screen app, wipes it. **Export after every site visit.**
+or deleting the home screen app, wipes it. **Prepare and confirm the complete
+package after every site visit.**
 
 The app stores schema-versioned data and keeps a pre-destructive backup before
 import or clear. Individual photo deletion requires two taps but is not
@@ -239,7 +244,7 @@ depends on it.
 
 The Data & storage card also reports whether the browser granted persistent
 storage. A grant reduces automatic eviction risk but is not a backup and cannot
-survive clearing browser data, so exports remain required after every visit.
+survive clearing browser data, so a complete package remains required after every visit.
 
 Version 1.6 establishes the pure, in-memory photo manifest that future batch
 sharing and PDF captions will use. It does not yet add a batch-share control or
@@ -300,3 +305,16 @@ The report uses portrait cover and room pages, landscape photographic-record
 sheets, explicit measurement qualifiers, and filenames matching the full photo
 copies in the ZIP. Report renditions are 600px JPEGs used only inside the PDF;
 the archive’s `photos/` files remain byte-identical to the stored survey images.
+
+Version 1.14 adds a self-contained interactive HTML report beside the PDF. It
+uses the same report model, remains searchable, and loads full-size images from
+the adjacent `photos/` folder without network requests.
+
+Version 1.15 makes the complete ZIP a restorable artifact. The importer validates
+the archive and every declared photo before changing survey state, assigns fresh
+device-storage IDs, and maps the selected cover by its handoff filename.
+
+Version 1.16 makes the package the only outward handoff, moves all photo work to
+the Photos tab, and requires an explicit report-cover choice. Each package also
+contains a CRLF, UTF-8 plain-text CRM note with every canonical field, including
+blank answers, while skipped sections remain visibly marked not applicable.

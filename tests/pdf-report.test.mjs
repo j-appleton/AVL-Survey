@@ -268,7 +268,7 @@ test("cover identity survives portable import, reordering and deliberate deletio
     assert.equal(result.survivesImport,true);
     assert.equal(result.reordered,5,"the stable descriptor id follows the selected photo");
     assert.equal(result.cleared,"");
-    assert.equal(result.fallback,0);
+    assert.equal(result.fallback,null);
   });
 });
 

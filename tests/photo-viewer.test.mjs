@@ -38,6 +38,7 @@ async function withViewer(run){
       }));
     }, photos());
     assert.equal(imported, true);
+    await page.evaluate(function(){ window.__avl.switchAppView("photos"); });
     await run(page);
     await context.close();
   } finally {
@@ -167,7 +168,7 @@ test("visible close, backdrop, and Escape all close without losing the page posi
       };
     });
     assert.equal(locked.position, "fixed");
-    assert.equal(locked.top, "-" + scrollY + "px");
+    assert.equal(locked.top, scrollY ? (-scrollY + "px") : "0px");
 
     await page.locator("[data-phv-close]").click();
     assert.equal(await page.locator(".phviewer").count(), 0);

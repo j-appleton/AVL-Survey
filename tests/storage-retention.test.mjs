@@ -100,7 +100,7 @@ test("storage retention reports granted and denied results without assuming succ
     assert.deepEqual(result.status, {state:"granted",requested:false});
     assert.deepEqual(result.calls, {persisted:1,persist:0});
     assert.match(result.text, /browser has agreed to keep this data/i);
-    assert.match(result.text, /Export after every visit/i);
+    assert.match(result.text, /Prepare the visit package after every visit/i);
     assert.equal(result.className, "hint");
     assertNoSafetyClaim(result.text);
   });

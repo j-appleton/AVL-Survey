@@ -35,7 +35,14 @@ async function capture(page, name, width, height, color){
     '" height="' + height + '"><rect width="' + width + '" height="' + height +
     '" fill="' + color + '"/></svg>';
   var chooserPromise = page.waitForEvent("filechooser");
-  await page.locator('[data-photos="1|notes"] [data-addph]').click();
+  await page.evaluate(function(){ window.__avl.switchAppView("photos"); });
+  var direct = page.locator('[data-photos="1|notes"] [data-addph]');
+  if(await direct.count()){
+    await direct.click();
+  } else {
+    await page.selectOption('[data-photo-add-select="1"]',"1|notes");
+    await page.locator('[data-add-room-photos="1"]').click();
+  }
   var chooser = await chooserPromise;
   await chooser.setFiles({
     name:name,
@@ -288,7 +295,9 @@ test("an IndexedDB add failure falls back inline and creates no orphan record", 
       await window.__avl.hydratePhotoSource("1|notes",0);
       await new Promise(function(resolve){ setTimeout(resolve,0); });
       var viewerResponse = await fetch(document.querySelector(".phvimage").src);
-      var storageWarning = document.querySelector("[data-photo-store-warning]");
+      var storageHost = document.createElement("div");
+      storageHost.innerHTML = window.__avl.storageHTML();
+      var storageWarning = storageHost.querySelector("[data-photo-store-warning]");
       return {
         memory:window.__avl.S().photos["1|notes"].slice(),
         durable:durable.data.photos["1|notes"].slice(),
@@ -318,7 +327,7 @@ test("an IndexedDB add failure falls back inline and creates no orphan record", 
       "the batch outcome must remain the only capture toast"
     );
     assert.match(result.storageWarning,/Device photo storage failed for part of a capture/i);
-    assert.match(result.storageWarning,/Export this survey after the visit/i);
+    assert.match(result.storageWarning,/Prepare the visit package after the visit/i);
   });
 });
 

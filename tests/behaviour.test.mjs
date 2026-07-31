@@ -41,6 +41,7 @@ async function importPhotos(page, name){
     }));
   }, {name:name, photos:photos});
   assert.equal(imported, true);
+  await page.evaluate(function(){ window.__avl.switchAppView("photos"); });
   return photos;
 }
 
