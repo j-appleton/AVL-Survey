@@ -323,7 +323,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.14.0";
+var APP_VERSION = "1.14.1";
 var SCHEMA = 3;
 
 /* ============================================================
@@ -2009,7 +2009,7 @@ function preparePhotoPackage(){
       var root = slug();
       var json = JSON.stringify(packageEnvelope(pkg.manifest),null,2);
       var entries = pkg.photoEntries.slice();
-      entries.push({name:root + "/" + root + ".pdf",bytes:report.bytes});
+      entries.push({name:root + "/" + pdfSlug() + ".pdf",bytes:report.bytes});
       entries.push({name:root + "/" + root + ".html",bytes:textBytes(html)});
       entries.push({name:root + "/data/survey-export.json",bytes:textBytes(json)});
       entries.push({name:root + "/data/photo-manifest.csv",bytes:photoManifestCSV(pkg.manifest)});
@@ -3616,6 +3616,18 @@ function slug(){
   var d = S.visit.date || "";
   return "avl-survey-" + c + (d ? "-" + d : "");
 }
+function pdfSlug(){
+  var words = (S.visit.client || "site")
+    .replace(/[^a-z0-9]+/gi," ")
+    .replace(/^\s+|\s+$/g,"")
+    .split(/\s+/)
+    .filter(function(word){ return !!word; })
+    .map(function(word){
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    });
+  var d = S.visit.date || "";
+  return "PrePlot-" + (words.join("-") || "Site") + (d ? "-" + d : "");
+}
 function exportJSON(){
   return portableEnvelope().then(function(portable){
     var json = JSON.stringify(portable,null,2);
@@ -5018,7 +5030,7 @@ function generatePdfReport(manifest,onProgress){
 function downloadPdfReport(result){
   var file = new File(
     [result.bytes],
-    slug() + ".pdf",
+    pdfSlug() + ".pdf",
     {type:"application/pdf",lastModified:Date.now()}
   );
   var url = URL.createObjectURL(file);
