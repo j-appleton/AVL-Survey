@@ -37,7 +37,7 @@ var BLUE_BYTES = Array.from(Buffer.from(
 function packageState(){
   return {
     visit:{
-      client:"Exact Package Client",
+      client:"exact package client",
       site:"Main Campus",
       date:"2026-07-26"
     },
@@ -206,7 +206,7 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
         root + "/photos/" + manifest[1].filename,
         root + "/photos/" + manifest[2].filename,
         root + "/photos/" + manifest[3].filename,
-        root + "/" + root + ".pdf",
+        root + "/PrePlot-Exact-Package-Client-2026-07-26.pdf",
         root + "/" + root + ".html",
         root + "/data/survey-export.json",
         root + "/data/photo-manifest.csv"
