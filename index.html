@@ -350,6 +350,45 @@ var LOGISTICS = [
   {k:"lognote", l:"Logistics notes", t:"area"}
 ];
 
+/* Ambient light has a custom UI, but its fields still need one canonical
+   definition. reportLabel and reportTileLabel preserve the deliberately
+   different language used by the PDF without creating another field list. */
+var LIGHT_FIELDS = [
+  {k:"lt_time", l:"Time of day", t:"time", inline:1,
+    reportLabel:"Ambient light \u00b7 Time of day"},
+  {k:"lt_sky", l:"Sky", t:"sel",
+    o:["","Sunny","Partly cloudy","Overcast","Dark / night"], inline:1,
+    reportLabel:"Ambient light \u00b7 Sky"},
+  {k:"lt_shade", l:"Window treatment", t:"sel",
+    o:["","None fitted","Fitted \u2014 open","Fitted \u2014 closed","Partial / sheer"],
+    reportLabel:"Ambient light \u00b7 Window treatment"},
+  {k:"lt_src", l:"Light sources present", t:"chips",
+    o:["Overhead LED/fluorescent","Downlights","North-facing glass",
+      "South/E/W-facing glass","Skylight","Accent / decorative","Stage lighting"],
+    reportLabel:"Ambient light \u00b7 Light sources"},
+  {k:"lux_disp", l:"At display wall", t:"num", inline:1,
+    reportTileLabel:"Display wall", reportTileKind:"measured"},
+  {k:"lux_mid", l:"Mid seating", t:"num", inline:1,
+    reportTileLabel:"Mid seating", reportTileKind:"measured"},
+  {k:"lux_rear", l:"Rear / window wall", t:"num", inline:1,
+    reportTileLabel:"Rear / windows", reportTileKind:"measured"},
+  {k:"lux_preset", l:"Estimated ambient light", t:"luxpreset",
+    reportTileLabel:"Ambient light", reportTileKind:"estimated"},
+  {k:"disptype", l:"Intended display type", t:"sel",
+    o:["","Direct-view (LCD / LED)","Projection"],
+    reportLabel:"Ambient light \u00b7 Intended display"},
+  {k:"scr_diag", l:"Diagonal (in)", t:"num", inline:1,
+    reportLabel:"Ambient light \u00b7 Screen diagonal"},
+  {k:"scr_gain", l:"Screen gain", t:"num", inline:1,
+    h:"Projection only. 1.0 if unknown.",
+    reportLabel:"Ambient light \u00b7 Screen gain"}
+];
+function lightFields(keys){
+  return keys.map(function(key){
+    return LIGHT_FIELDS.filter(function(field){ return field.k === key; })[0];
+  }).filter(function(field){ return !!field; });
+}
+
 var ROOM_SECTIONS = [
   { id:"id", title:"Room", fields:[
     {k:"name", l:"Room name / number", t:"text", c:1},
@@ -2683,22 +2722,12 @@ function lightHTML(scope){
   var isProj = d.disptype === "Projection";
 
   var h = "";
-  h += fieldsHTML(scope, [
-    {k:"lt_time", l:"Time of day", t:"time", inline:1},
-    {k:"lt_sky",  l:"Sky", t:"sel", o:["","Sunny","Partly cloudy","Overcast","Dark / night"], inline:1}
-  ]);
-  h += fieldsHTML(scope, [
-    {k:"lt_shade", l:"Window treatment", t:"sel", o:["","None fitted","Fitted — open","Fitted — closed","Partial / sheer"]},
-    {k:"lt_src",   l:"Light sources present", t:"chips", o:["Overhead LED/fluorescent","Downlights","North-facing glass","South/E/W-facing glass","Skylight","Accent / decorative","Stage lighting"]}
-  ]);
+  h += fieldsHTML(scope, lightFields(["lt_time","lt_sky"]));
+  h += fieldsHTML(scope, lightFields(["lt_shade","lt_src"]));
 
   h += '<div class="f"><span class="flab">Measured lux <span class="core">&bull;</span></span>' +
        '<span class="hint" style="margin:0 0 8px">Meter or phone app, held at the surface, facing the light. Take all three if you can.</span></div>';
-  h += fieldsHTML(scope, [
-    {k:"lux_disp", l:"At display wall", t:"num", inline:1},
-    {k:"lux_mid",  l:"Mid seating", t:"num", inline:1},
-    {k:"lux_rear", l:"Rear / window wall", t:"num", inline:1}
-  ]);
+  h += fieldsHTML(scope, lightFields(["lux_disp","lux_mid","lux_rear"]));
 
   h += '<div class="f"><span class="flab">No meter? Pick the closest match</span><div class="lux" data-scope="'+esc(scope)+'" data-k="lux_preset">' +
     LUX_PRESETS.map(function(p){
@@ -2708,11 +2737,7 @@ function lightHTML(scope){
              '<span class="vl">~'+p.v+' lx</span></button>';
     }).join("") + '</div></div>';
 
-  h += fieldsHTML(scope, [
-    {k:"disptype", l:"Intended display type", t:"sel", o:["","Direct-view (LCD / LED)","Projection"]},
-    {k:"scr_diag", l:"Diagonal (in)", t:"num", inline:1},
-    {k:"scr_gain", l:"Screen gain", t:"num", inline:1, h:"Projection only. 1.0 if unknown."}
-  ]);
+  h += fieldsHTML(scope, lightFields(["disptype","scr_diag","scr_gain"]));
 
   /* ---- computed panel ---- */
   h += '<div class="calc" data-calc="'+esc(scope)+'">' + calcHTML(scope) + '</div>';
@@ -4370,22 +4395,21 @@ function reportDimensionTiles(room){
 function reportLightTiles(room){
   var data = room.d || {};
   var tiles = [];
-  [
-    {key:"lux_disp",label:"Display wall"},
-    {key:"lux_mid",label:"Mid seating"},
-    {key:"lux_rear",label:"Rear / windows"}
-  ].forEach(function(field){
-    if(answered(data[field.key])){
+  LIGHT_FIELDS.filter(function(field){
+    return field.reportTileKind === "measured";
+  }).forEach(function(field){
+    if(answered(data[field.k])){
       tiles.push({
-        label:field.label,
-        value:Math.round(num(data[field.key])) + " lux",
+        label:field.reportTileLabel,
+        value:Math.round(num(data[field.k])) + " lux",
         qualifier:"measured"
       });
     }
   });
   if(!tiles.length && answered(data.lux_preset)){
+    var presetField = lightFields(["lux_preset"])[0];
     tiles.push({
-      label:"Ambient light",
+      label:presetField.reportTileLabel,
       value:"~" + Math.round(num(data.lux_preset)) + " lux",
       qualifier:"estimated, no meter"
     });
@@ -4416,17 +4440,13 @@ function reportFieldRows(room){
     flags:true,open:true,gen:true
   };
   var rows = [];
-  [
-    {key:"lt_time",label:"Ambient light \u00b7 Time of day"},
-    {key:"lt_sky",label:"Ambient light \u00b7 Sky"},
-    {key:"lt_shade",label:"Ambient light \u00b7 Window treatment"},
-    {key:"lt_src",label:"Ambient light \u00b7 Light sources"},
-    {key:"disptype",label:"Ambient light \u00b7 Intended display"},
-    {key:"scr_diag",label:"Ambient light \u00b7 Screen diagonal"},
-    {key:"scr_gain",label:"Ambient light \u00b7 Screen gain"}
-  ].forEach(function(field){
-    if(answered(data[field.key])){
-      rows.push({label:field.label,value:disp(data[field.key])});
+  /* Fields handled as stats/cards belong in omit above. LIGHT_FIELDS owns its
+     custom report labels so the PDF and CRM note cannot silently diverge. */
+  LIGHT_FIELDS.filter(function(field){
+    return !!field.reportLabel;
+  }).forEach(function(field){
+    if(answered(data[field.k])){
+      rows.push({label:field.reportLabel,value:disp(data[field.k])});
     }
   });
   ROOM_SECTIONS.forEach(function(section){
@@ -5264,6 +5284,7 @@ window.__avl = {
   localBytes:localBytes,
   photoCount:photoCount,
   photoManifest:photoManifest,
+  LIGHT_FIELDS:LIGHT_FIELDS,
   isPhotoDescriptor:isPhotoDescriptor,
   photoStorageCounts:photoStorageCounts,
   refreshPhotoIntegrity:refreshPhotoIntegrity,
