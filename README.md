@@ -68,8 +68,10 @@ it works with no signal — the service worker caches everything on first load.
 - Importing over work and clearing a survey create a recoverable snapshot.
   **Restore backup** appears whenever one is available.
 - Photos, capture controls, and recovery notices live in the dedicated
-  **Photos** tab. Tap any thumbnail to inspect the full stored survey image without the
-  thumbnail crop, then move through the other photos in that section.
+  **Photos** tab. Every room section stays visible there as a direct capture
+  checklist, including empty sections; there is no destination picker to hide
+  the required shot list. Tap any thumbnail to inspect the full stored survey
+  image without the thumbnail crop, then move through the other photos in that section.
 - The top of the Photos tab makes the report cover an explicit decision. Choose
   a photo there or from the full-screen viewer; without one, the PDF uses a
   deliberate plain navy cover rather than silently taking the first photo.
@@ -122,7 +124,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v23";  // bump this for every runtime change
+var CACHE = "avl-survey-v24";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed

@@ -36,13 +36,7 @@ async function capture(page, name, width, height, color){
     '" fill="' + color + '"/></svg>';
   var chooserPromise = page.waitForEvent("filechooser");
   await page.evaluate(function(){ window.__avl.switchAppView("photos"); });
-  var direct = page.locator('[data-photos="1|notes"] [data-addph]');
-  if(await direct.count()){
-    await direct.click();
-  } else {
-    await page.selectOption('[data-photo-add-select="1"]',"1|notes");
-    await page.locator('[data-add-room-photos="1"]').click();
-  }
+  await page.locator('[data-photos="1|notes"] [data-addph]').click();
   var chooser = await chooserPromise;
   await chooser.setFiles({
     name:name,
