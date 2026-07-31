@@ -298,7 +298,7 @@ button.btn:active{transform:translateY(1px)}
 <div class="toast" id="toast"></div>
 <div class="sysnotices" id="systemNotices" aria-live="polite"></div>
 <input type="file" id="filein" accept="image/*" capture="environment" multiple hidden>
-<input type="file" id="jsonin" accept="application/json,.json" hidden>
+<input type="file" id="jsonin" accept="application/zip,.zip,application/json,.json" hidden>
 
 <script src="./photo-store.js"></script>
 <script>
@@ -323,7 +323,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.14.1";
+var APP_VERSION = "1.15.0";
 var SCHEMA = 3;
 
 /* ============================================================
@@ -1683,11 +1683,34 @@ function write32(bytes, offset, value){
   bytes[offset+2] = (value >>> 16) & 255;
   bytes[offset+3] = (value >>> 24) & 255;
 }
+function read16(bytes, offset){
+  if(offset < 0 || offset + 2 > bytes.length) throw new Error("Package directory is truncated");
+  return bytes[offset] | (bytes[offset+1] << 8);
+}
+function read32(bytes, offset){
+  if(offset < 0 || offset + 4 > bytes.length) throw new Error("Package directory is truncated");
+  return (
+    bytes[offset] |
+    (bytes[offset+1] << 8) |
+    (bytes[offset+2] << 16) |
+    (bytes[offset+3] << 24)
+  ) >>> 0;
+}
 function textBytes(text){
   var raw = unescape(encodeURIComponent(String(text)));
   var bytes = new Uint8Array(raw.length);
   for(var i=0;i<raw.length;i++) bytes[i] = raw.charCodeAt(i);
   return bytes;
+}
+function bytesText(bytes){
+  if(window.TextDecoder){
+    try { return new TextDecoder("utf-8",{fatal:true}).decode(bytes); }
+    catch(error){ throw new Error("Package text is not valid UTF-8"); }
+  }
+  var raw = "";
+  for(var i=0;i<bytes.length;i++) raw += String.fromCharCode(bytes[i]);
+  try { return decodeURIComponent(escape(raw)); }
+  catch(error){ throw new Error("Package text is not valid UTF-8"); }
 }
 function concatBytes(parts){
   var total = 0;
@@ -1765,6 +1788,137 @@ function zipStore(entries){
   write16(end,20,0);
   return new Blob(parts.concat(central).concat([end]), {type:"application/zip"});
 }
+function zipEntryNameValid(name){
+  if(!name || name.charAt(0) === "/" || name.indexOf("\\") > -1 ||
+     name.indexOf("\u0000") > -1) return false;
+  var parts = name.split("/");
+  if(parts.length < 2) return false;
+  for(var i=0;i<parts.length;i++){
+    if(!parts[i] || parts[i] === "..") return false;
+  }
+  return true;
+}
+function zipReadStore(input){
+  var bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  if(bytes.length < 22) throw new Error("Package is not a complete ZIP");
+
+  var endAt = -1;
+  var minimum = Math.max(0,bytes.length - 22 - 65535);
+  for(var scan=bytes.length-22;scan>=minimum;scan--){
+    if(read32(bytes,scan) !== 0x06054b50) continue;
+    var commentLength = read16(bytes,scan+20);
+    if(scan + 22 + commentLength <= bytes.length){
+      endAt = scan;
+      break;
+    }
+  }
+  if(endAt < 0) throw new Error("Package ZIP directory was not found");
+  if(read16(bytes,endAt+4) !== 0 || read16(bytes,endAt+6) !== 0){
+    throw new Error("Multi-disk ZIP packages are not supported");
+  }
+  var diskEntries = read16(bytes,endAt+8);
+  var entryCount = read16(bytes,endAt+10);
+  var centralSize = read32(bytes,endAt+12);
+  var centralOffset = read32(bytes,endAt+16);
+  if(diskEntries !== entryCount || centralOffset + centralSize !== endAt ||
+     centralOffset > endAt){
+    throw new Error("Package ZIP directory is inconsistent");
+  }
+
+  var records = [];
+  var names = Object.create(null);
+  var roots = Object.create(null);
+  var cursor = centralOffset;
+  for(var i=0;i<entryCount;i++){
+    if(read32(bytes,cursor) !== 0x02014b50){
+      throw new Error("Package central directory is malformed");
+    }
+    var flags = read16(bytes,cursor+8);
+    var method = read16(bytes,cursor+10);
+    var checksum = read32(bytes,cursor+16);
+    var compressed = read32(bytes,cursor+20);
+    var uncompressed = read32(bytes,cursor+24);
+    var nameLength = read16(bytes,cursor+28);
+    var extraLength = read16(bytes,cursor+30);
+    var entryCommentLength = read16(bytes,cursor+32);
+    var diskStart = read16(bytes,cursor+34);
+    var localOffset = read32(bytes,cursor+42);
+    var next = cursor + 46 + nameLength + extraLength + entryCommentLength;
+    if(next > centralOffset + centralSize){
+      throw new Error("Package central directory is truncated");
+    }
+    if((flags & ~0x0800) !== 0 || method !== 0 || compressed !== uncompressed ||
+       diskStart !== 0){
+      throw new Error("Only PrePlot store-only ZIP packages are supported");
+    }
+    var name = bytesText(bytes.subarray(cursor+46,cursor+46+nameLength));
+    if(!zipEntryNameValid(name)) throw new Error("Package contains an unsafe path");
+    if(names[name]) throw new Error("Package contains a duplicate path");
+    names[name] = true;
+    roots[name.split("/")[0]] = true;
+    records.push({
+      name:name,
+      flags:flags,
+      method:method,
+      crc:checksum,
+      compressed:compressed,
+      size:uncompressed,
+      localOffset:localOffset
+    });
+    cursor = next;
+  }
+  if(cursor !== centralOffset + centralSize){
+    throw new Error("Package entry count does not match its directory");
+  }
+  var rootNames = Object.keys(roots);
+  if(rootNames.length !== 1) throw new Error("Package must contain exactly one top-level folder");
+
+  var ranges = [];
+  records.forEach(function(record){
+    var at = record.localOffset;
+    if(at >= centralOffset || read32(bytes,at) !== 0x04034b50){
+      throw new Error("Package local header is missing");
+    }
+    var localFlags = read16(bytes,at+6);
+    var localMethod = read16(bytes,at+8);
+    var localCrc = read32(bytes,at+14);
+    var localCompressed = read32(bytes,at+18);
+    var localSize = read32(bytes,at+22);
+    var localNameLength = read16(bytes,at+26);
+    var localExtraLength = read16(bytes,at+28);
+    var localName = bytesText(bytes.subarray(at+30,at+30+localNameLength));
+    var dataAt = at + 30 + localNameLength + localExtraLength;
+    var dataEnd = dataAt + record.compressed;
+    if(localName !== record.name || localFlags !== record.flags ||
+       localMethod !== record.method || localCrc !== record.crc ||
+       localCompressed !== record.compressed || localSize !== record.size ||
+       dataEnd > centralOffset){
+      throw new Error("Package local header disagrees with its directory");
+    }
+    ranges.push({start:at,end:dataEnd});
+    record.dataAt = dataAt;
+  });
+  ranges.sort(function(a,b){ return a.start-b.start; });
+  for(var rangeIndex=1;rangeIndex<ranges.length;rangeIndex++){
+    if(ranges[rangeIndex].start < ranges[rangeIndex-1].end){
+      throw new Error("Package entries overlap");
+    }
+  }
+
+  var entries = Object.create(null);
+  records.forEach(function(record){
+    var data = bytes.subarray(record.dataAt,record.dataAt+record.size);
+    if(crc32(data) !== record.crc) throw new Error("Package entry failed its CRC check");
+    entries[record.name] = {
+      name:record.name,
+      bytes:data,
+      crc:record.crc
+    };
+  });
+  return {root:rootNames[0],entries:entries,names:records.map(function(record){
+    return record.name;
+  })};
+}
 function csvCell(value){
   var text = value === undefined || value === null ? "" : String(value);
   if(/[",\r\n]/.test(text)) return '"' + text.replace(/"/g,'""') + '"';
@@ -1788,8 +1942,17 @@ function packageHead(){
   return {
     client:String((S.visit && S.visit.client) || ""),
     site:String((S.visit && S.visit.site) || ""),
-    date:String((S.visit && S.visit.date) || "")
+    date:String((S.visit && S.visit.date) || ""),
+    coverPhotoId:String((S.visit && S.visit.coverPhotoId) || "")
   };
+}
+function packageCoverFilename(manifest){
+  var chosen = S.visit && S.visit.coverPhotoId;
+  if(!chosen) return "";
+  for(var i=0;i<manifest.length;i++){
+    if(packageSource(manifest[i]) === chosen) return manifest[i].filename;
+  }
+  return "";
 }
 function packageEnvelope(manifest){
   var data = JSON.parse(JSON.stringify({
@@ -1801,6 +1964,7 @@ function packageEnvelope(manifest){
     ui:S.ui,
     meta:S.meta
   }));
+  if(data.visit) delete data.visit.coverPhotoId;
   Object.keys(photoBuckets()).forEach(function(key){
     data.photos[key] = [];
   });
@@ -1821,6 +1985,7 @@ function packageEnvelope(manifest){
     schema:SCHEMA,
     photoFormat:"archive",
     pathBase:"archive-root",
+    coverPhoto:packageCoverFilename(manifest),
     appVersion:APP_VERSION,
     exportedAt:nowISO(),
     data:data
@@ -3832,6 +3997,194 @@ function portableImportState(payload, useDescriptors){
     return coerce(data);
   });
 }
+function packagePhotoEntryValid(value){
+  if(!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if(typeof value.ref !== "string" || !/^\d+$/.test(value.ref)) return false;
+  if(typeof value.filename !== "string" || !value.filename ||
+     value.filename.indexOf("/") > -1 || value.filename.indexOf("\\") > -1) return false;
+  if(value.path !== "photos/" + value.filename) return false;
+  if(typeof value.mime !== "string" || !value.mime) return false;
+  var numeric = ["bytes","width","height"];
+  for(var i=0;i<numeric.length;i++){
+    var number = value[numeric[i]];
+    if(typeof number !== "number" || !isFinite(number) || number < 0 ||
+       Math.floor(number) !== number) return false;
+  }
+  var dot = value.filename.lastIndexOf(".");
+  if(dot < 1 || photoExtension(value.mime.toLowerCase()) !==
+     value.filename.slice(dot+1).toLowerCase()) return false;
+  return true;
+}
+function packageImportPreflight(input){
+  var archive = zipReadStore(input);
+  var jsonName = archive.root + "/data/survey-export.json";
+  var jsonEntry = archive.entries[jsonName];
+  if(!jsonEntry) throw new Error("Package survey data is missing");
+  var payload;
+  try { payload = JSON.parse(bytesText(jsonEntry.bytes)); }
+  catch(error){ throw new Error("Package survey data is not valid JSON"); }
+  if(!payload || payload.app !== "avl-survey" || payload.schema !== 3 ||
+     payload.photoFormat !== "archive" || payload.pathBase !== "archive-root" ||
+     !payload.data || typeof payload.data !== "object"){
+    throw new Error("This is not a supported PrePlot package");
+  }
+  if(typeof payload.coverPhoto !== "undefined" &&
+     typeof payload.coverPhoto !== "string"){
+    throw new Error("Package cover reference is malformed");
+  }
+  var sourcePhotos = payload.data.photos;
+  if(!sourcePhotos || typeof sourcePhotos !== "object" || Array.isArray(sourcePhotos)){
+    throw new Error("Package photo data is malformed");
+  }
+  var data = JSON.parse(JSON.stringify({
+    visit:payload.data.visit,
+    log:payload.data.log,
+    rooms:payload.data.rooms,
+    photos:{},
+    skipped:payload.data.skipped,
+    ui:payload.data.ui,
+    meta:payload.data.meta
+  }));
+  data.visit = data.visit || {};
+  data.visit.coverPhotoId = "";
+  var jobs = [];
+  var declaredPaths = Object.create(null);
+  Object.keys(sourcePhotos).forEach(function(key){
+    var list = sourcePhotos[key];
+    if(!Array.isArray(list)) throw new Error("Package photo data is malformed");
+    data.photos[key] = [];
+    list.forEach(function(item,index){
+      if(!packagePhotoEntryValid(item)){
+        throw new Error("Package photo data is malformed");
+      }
+      var fullPath = archive.root + "/" + item.path;
+      if(declaredPaths[fullPath]) throw new Error("Package declares a duplicate photo");
+      declaredPaths[fullPath] = true;
+      var stored = archive.entries[fullPath];
+      if(!stored) throw new Error("Package photo is missing: " + item.filename);
+      if(stored.bytes.length !== item.bytes){
+        throw new Error("Package photo size does not match its manifest");
+      }
+      jobs.push({
+        key:key,
+        bucketIndex:index,
+        item:item,
+        bytes:stored.bytes
+      });
+    });
+  });
+  archive.names.forEach(function(name){
+    if(name.indexOf(archive.root + "/photos/") !== 0) return;
+    if(!declaredPaths[name]) throw new Error("Package contains an undeclared photo");
+  });
+  jobs.sort(function(a,b){
+    return parseInt(a.item.ref,10) - parseInt(b.item.ref,10);
+  });
+  var refWidth = Math.max(3,String(jobs.length).length);
+  var filenames = Object.create(null);
+  jobs.forEach(function(job,index){
+    if(job.item.ref !== photoPad(index+1,refWidth)){
+      throw new Error("Package photo order is inconsistent");
+    }
+    if(filenames[job.item.filename]){
+      throw new Error("Package photo filename is duplicated");
+    }
+    filenames[job.item.filename] = true;
+  });
+  var coverFilename = payload.coverPhoto || "";
+  var coverJob = null;
+  if(coverFilename){
+    jobs.forEach(function(job){
+      if(job.item.filename === coverFilename) coverJob = job;
+    });
+    if(!coverJob) throw new Error("Package cover photo is missing");
+  }
+  var baseValidation = validate(data);
+  if(!baseValidation.ok) throw new Error(baseValidation.reason);
+  return {
+    archive:archive,
+    data:data,
+    jobs:jobs,
+    coverJob:coverJob
+  };
+}
+function packageBytesEqual(left,right){
+  if(left.length !== right.length) return false;
+  for(var i=0;i<left.length;i++){
+    if(left[i] !== right[i]) return false;
+  }
+  return true;
+}
+function applyPackageImport(input){
+  var prepared;
+  try { prepared = packageImportPreflight(input); }
+  catch(error){
+    toast("Not imported: " + (error && error.message ? error.message : "package preflight failed"));
+    return Promise.resolve(false);
+  }
+  var written = [];
+  var chain = Promise.resolve();
+  if(prepared.jobs.length && (!window.AVLPhotoStore ||
+     typeof window.AVLPhotoStore.createId !== "function" ||
+     typeof window.AVLPhotoStore.addRecord !== "function" ||
+     typeof window.AVLPhotoStore.get !== "function")){
+    toast("Not imported: Photo storage is unavailable");
+    return Promise.resolve(false);
+  }
+  prepared.jobs.forEach(function(job){
+    chain = chain.then(function(){
+      var record = {
+        id:window.AVLPhotoStore.createId(),
+        mime:job.item.mime.toLowerCase(),
+        blob:new Blob([job.bytes],{type:job.item.mime.toLowerCase()}),
+        width:job.item.width,
+        height:job.item.height,
+        bytes:job.bytes.length,
+        createdAt:nowISO()
+      };
+      return window.AVLPhotoStore.addRecord(record).then(function(){
+        written.push(record.id);
+        return window.AVLPhotoStore.get(record.id);
+      }).then(function(readback){
+        var descriptor = descriptorFromPhotoRecord(readback);
+        if(descriptor.mime !== job.item.mime.toLowerCase() ||
+           descriptor.bytes !== job.item.bytes ||
+           descriptor.width !== job.item.width ||
+           descriptor.height !== job.item.height ||
+           !readback.blob || readback.blob.size !== job.item.bytes){
+          throw new Error("Photo storage verification failed");
+        }
+        return readback.blob.arrayBuffer().then(function(buffer){
+          if(!packageBytesEqual(new Uint8Array(buffer),job.bytes)){
+            throw new Error("Photo storage verification failed");
+          }
+          job.record = readback;
+        });
+      });
+    });
+  });
+  return chain.then(function(){
+    prepared.jobs.forEach(function(job){
+      prepared.data.photos[job.key][job.bucketIndex] =
+        descriptorFromPhotoRecord(job.record);
+      if(job === prepared.coverJob){
+        prepared.data.visit.coverPhotoId = job.record.id;
+      }
+    });
+    var result = validate(prepared.data);
+    if(!result.ok) throw new Error(result.reason);
+    var applied = applyPreparedImport(coerce(prepared.data),3);
+    if(!applied){
+      written.forEach(rememberOrphanedPhotoId);
+      return false;
+    }
+    return true;
+  }).catch(function(error){
+    written.forEach(rememberOrphanedPhotoId);
+    toast("Not imported: " + (error && error.message ? error.message : "package import failed"));
+    return false;
+  });
+}
 function applyPreparedImport(incoming, from){
   var rooms = incoming.rooms.length;
   var hadWork = hasSurveyWork();
@@ -3869,7 +4222,7 @@ function applyImport(text){
 
   if(parsed && parsed.app === "avl-survey" && parsed.schema === 3){
     if(parsed.photoFormat === "archive"){
-      toast("Not imported: This is the survey file from inside a photo package. Its photos are in the photos folder beside it. Use Export data for a file that imports on its own.");
+      toast("Not imported: this is the survey file from inside a package. Import the complete .zip package instead.");
       return false;
     }
     if(parsed.photoFormat !== "inline"){
@@ -3907,9 +4260,20 @@ function restoreBackup(){
 document.getElementById("jsonin").addEventListener("change", function(e){
   var f = e.target.files[0]; if(!f) return;
   var r = new FileReader();
-  r.onload = function(){ applyImport(r.result); };
+  r.onload = function(){
+    var bytes = new Uint8Array(r.result);
+    if(bytes.length >= 4 && read32(bytes,0) === 0x04034b50){
+      applyPackageImport(bytes);
+      return;
+    }
+    var text;
+    try { text = bytesText(bytes); }
+    catch(error){ toast("Could not read that file"); return; }
+    if(text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    applyImport(text);
+  };
   r.onerror = function(){ toast("Could not read that file"); };
-  r.readAsText(f);
+  r.readAsArrayBuffer(f);
   e.target.value = "";
 });
 
@@ -5307,11 +5671,13 @@ window.__avl = {
     });
   },
   zipStore:zipStore,
+  zipReadStore:zipReadStore,
   photoManifestCSV:photoManifestCSV,
   readPhotoSource:readPhotoSource,
   preparePhotoPackage:preparePhotoPackage,
   sharePreparedPackage:sharePreparedPackage,
   downloadPreparedPackage:downloadPreparedPackage,
+  applyPackageImport:applyPackageImport,
   photoPackageStatus:photoPackageStatus,
   photoPackageIsCurrent:photoPackageIsCurrent,
   photoPackageFile:function(){

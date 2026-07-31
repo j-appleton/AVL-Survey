@@ -62,9 +62,10 @@ it works with no signal — the service worker caches everything on first load.
 - The **core** counter in the header tracks the small subset worth chasing before
   you leave site. Everything else is optional.
 - **+ Room** adds a space; **Duplicate** clones one for near-identical rooms.
-- **Export data** downloads a versioned JSON backup. **Import** validates and
-  upgrades older exports before applying them. **Show raw data** is the fallback
-  if a download is ever blocked.
+- **Export data** downloads a versioned JSON backup. **Import** accepts a complete
+  PrePlot ZIP package or an older JSON backup, validates it before touching the
+  current survey, and upgrades older data when needed. **Show raw data** is the
+  fallback if a download is ever blocked.
 - Importing over work and clearing a survey create a recoverable snapshot.
   **Restore backup** appears whenever one is available.
 - Tap any photo thumbnail to inspect the full stored survey image without the
@@ -87,6 +88,7 @@ it works with no signal — the service worker caches everything on first load.
   those packaged photo files, an Excel-friendly photo manifest, a designed
   site-visit PDF, and a searchable interactive HTML report whose thumbnails
   open the matching full-resolution files from the adjacent `photos` folder.
+  The complete ZIP can be imported back into PrePlot as the survey backup.
   **Share package…** opens the device share
   sheet for Google Drive; **Download package instead** is always available.
   The app cannot verify either destination, so it tells you to confirm the file
@@ -116,7 +118,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v21";  // bump this for every runtime change
+var CACHE = "avl-survey-v22";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
