@@ -226,6 +226,8 @@ test("CRM note walks canonical fields, preserves blanks and ships once at the ar
     assert.match(direct.text,/Delivery \/ dock access OK: ISSUE — Dock closes at 16:00\./);
     assert.match(direct.text,/Wall construction: Drywall, Glass/);
     assert.match(direct.text,/Backing \/ blocking present at display wall: ISSUE — Add blocking\.\r\n  Verify wall depth\./);
+    assert.match(direct.text,/At display wall: 210 lux\r\n/,"lux readings must carry their unit");
+    assert.match(direct.text,/Mid seating: \r\n/,"an unmeasured lux field must stay blank, not read \"lux\"");
     direct.lightLabels.forEach(function(label){
       assert.match(direct.text,new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + ":"));
     });
