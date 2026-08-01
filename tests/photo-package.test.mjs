@@ -667,8 +667,8 @@ test("identity moving after photo reads is discarded by the post-preparation re-
         var source = String(window.__avl.preparePhotoPackage);
         return (source.match(/!photoPackageIsCurrent\(pkg\)/g) || []).length;
       }),
-      2,
-      "preparation must re-check identity after rendition work and final assembly"
+      3,
+      "preparation must re-check identity after renditions, portable HTML work and final assembly"
     );
     var before = await surveyStateSnapshot(page);
     await page.evaluate(function(){

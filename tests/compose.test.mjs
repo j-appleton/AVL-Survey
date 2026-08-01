@@ -244,7 +244,7 @@ test("package import remaps exclusions to fresh IDs and malformed flags fail bef
   });
 });
 
-test("real PDF and HTML previews preserve state and revoke every preview URL", async function(){
+test("PDF uses a native viewer while HTML locks, closes and restores the app", async function(){
   await withApp(async function(page){
     await installPhotos(page,1);
     await page.locator('[data-app-view="compose"]').click();
@@ -255,31 +255,89 @@ test("real PDF and HTML previews preserve state and revoke every preview URL", a
     var before = await surveyStateSnapshot(page);
     await page.evaluate(function(){
       window.__composeRevoked = [];
+      window.__composeNativePdf = {opened:0,active:false,url:"",closed:false};
       var original = URL.revokeObjectURL.bind(URL);
       URL.revokeObjectURL = function(url){ window.__composeRevoked.push(url); return original(url); };
+      window.open = function(){
+        window.__composeNativePdf.opened++;
+        window.__composeNativePdf.active = !navigator.userActivation || navigator.userActivation.isActive;
+        var preview = {
+          closed:false,
+          location:{replace:function(url){ window.__composeNativePdf.url = String(url); }},
+          close:function(){ preview.closed = true; window.__composeNativePdf.closed = true; }
+        };
+        return preview;
+      };
     });
-    var pdfOpen = await page.evaluate(async function(){
-      var first = window.__avl.openComposePreview("pdf");
-      var overlap = await window.__avl.openComposePreview("html");
-      return {first:await first,overlap:overlap};
-    });
-    assert.deepEqual(pdfOpen,{first:true,overlap:false});
-    assert.equal(await page.locator("[data-compose-preview-overlay] iframe").count(),1);
+    await page.locator('[data-compose-preview="pdf"]').click();
+    var overlap = await page.evaluate(function(){ return window.__avl.openComposePreview("html"); });
+    assert.equal(await overlap,false,"a second preview cannot overlap PDF generation");
+    await until(async function(){
+      return (await page.evaluate(function(){ return window.__composeNativePdf.url; })).indexOf("blob:") === 0;
+    },15000);
+    var nativePdf = await page.evaluate(function(){ return window.__composeNativePdf; });
+    assert.equal(nativePdf.opened,1);
+    assert.equal(nativePdf.active,true,"the native context must open inside the trusted tap");
+    assert.equal(await page.locator("[data-compose-preview-overlay]").count(),0,
+      "PDF must never be trapped inside the app's iframe overlay");
     var pdfUrls = await page.evaluate(function(){ return window.__avl.composePreviewUrls(); });
-    await page.locator("[data-compose-preview-close]").click();
+    assert.deepEqual(pdfUrls,[],"the native viewer URL must not share the overlay's early-revocation pool");
+    await page.evaluate(function(){ window.__avl.closeComposePreview(); });
     assert.equal(await surveyStateSnapshot(page),before);
     assert.equal(await page.evaluate(function(){ return window.__avl.photoPackageStatus().status; }),"ready");
     var pdfRevoked = await page.evaluate(function(){ return window.__composeRevoked.slice(); });
-    pdfUrls.forEach(function(url){ assert.ok(pdfRevoked.indexOf(url) > -1); });
+    assert.equal(pdfRevoked.indexOf(nativePdf.url),-1,
+      "backgrounding the PWA must not revoke the PDF while the native viewer loads it");
+    assert.match(await page.evaluate(function(url){
+      return fetch(url).then(function(response){ return response.text(); });
+    },nativePdf.url),/^%PDF-1\.4/);
 
-    assert.equal(await page.evaluate(function(){ return window.__avl.openComposePreview("html"); }),true);
+    await page.locator('[data-compose-preview="html"]').click();
+    await page.locator("[data-compose-preview-overlay] iframe").waitFor({state:"visible"});
+    assert.equal(
+      await page.locator("[data-compose-preview-overlay] iframe").getAttribute("sandbox"),
+      "allow-scripts",
+      "the srcdoc preview must stay isolated without a WebKit-hostile blob document"
+    );
+    var locked = await page.evaluate(function(){
+      return {position:document.body.style.position,overflow:document.body.style.overflow};
+    });
+    assert.deepEqual(locked,{position:"fixed",overflow:"hidden"},
+      "the document behind the preview must not scroll");
     var htmlUrls = await page.evaluate(function(){ return window.__avl.composePreviewUrls(); });
+    assert.deepEqual(htmlUrls,[],"srcdoc must not create another revocable preview URL");
     await page.locator("[data-compose-preview-close]").click();
+    assert.deepEqual(await page.evaluate(function(){
+      return {
+        position:document.body.style.position,
+        overflow:document.body.style.overflow,
+        focused:document.activeElement && document.activeElement.getAttribute("data-compose-preview")
+      };
+    }),{position:"",overflow:"",focused:"html"});
     assert.equal(await surveyStateSnapshot(page),before);
     assert.equal(await page.evaluate(function(){ return window.__avl.photoPackageStatus().status; }),"ready");
     var revoked = await page.evaluate(function(){ return window.__composeRevoked.slice(); });
     htmlUrls.forEach(function(url){ assert.ok(revoked.indexOf(url) > -1); });
     assert.equal(await page.evaluate(function(){ return window.__avl.composePreviewUrls().length; }),0);
+  });
+});
+
+test("a blocked native PDF window falls back to an explicit open or download choice", async function(){
+  await withApp(async function(page){
+    await installPhotos(page,1);
+    await page.locator('[data-app-view="compose"]').click();
+    await page.evaluate(function(){ window.open = function(){ return null; }; });
+    await page.locator('[data-compose-preview="pdf"]').click();
+    await page.locator("[data-compose-preview-overlay]").waitFor({state:"visible"});
+    assert.equal(await page.locator("[data-compose-preview-overlay] iframe").count(),0);
+    var openLink = page.locator("[data-compose-pdf-open]");
+    assert.equal(await openLink.count(),1);
+    assert.match(await openLink.getAttribute("href"),/^blob:/);
+    assert.equal(await openLink.getAttribute("target"),"_blank");
+    var download = page.locator("[data-compose-preview-overlay] a[download]");
+    assert.equal(await download.count(),1);
+    assert.match(await download.getAttribute("download"),/\.pdf$/);
+    await page.locator("[data-compose-preview-close]").click();
   });
 });
 
@@ -357,49 +415,58 @@ test("preview overlays carry the real report bytes, not stand-in markup", async 
     });
     await page.locator('[data-app-view="compose"]').click();
 
-    var pdf = await page.evaluate(async function(){
-      var expected = await window.__avl.generatePdfReport();
-      var opened = await window.__avl.openComposePreview("pdf");
-      var frame = document.querySelector("[data-compose-preview-overlay] iframe");
-      var actual = new Uint8Array(await fetch(frame.src).then(function(response){
-        return response.arrayBuffer();
-      }));
-      var same = actual.length === expected.bytes.length;
-      if(same){
-        for(var i=0;i<actual.length;i++){
-          if(actual[i] !== expected.bytes[i]){ same = false; break; }
-        }
-      }
-      return {
-        opened:opened,
-        head:String.fromCharCode.apply(null,actual.subarray(0,8)),
-        length:actual.length,
-        expectedLength:expected.bytes.length,
-        identical:same
+    await page.evaluate(function(){
+      window.__composePdfUrl = "";
+      window.open = function(){
+        return {
+          closed:false,
+          location:{replace:function(url){ window.__composePdfUrl = String(url); }},
+          close:function(){}
+        };
       };
     });
-    assert.equal(pdf.opened,true);
-    assert.match(pdf.head,/^%PDF-1\.4/,"the preview must be a real PDF");
-    assert.ok(pdf.expectedLength > 2000,"the fixture report must be substantial");
-    assert.equal(
-      pdf.identical,true,
-      "the previewed bytes must be exactly what generatePdfReport produces"
-    );
-    await page.locator("[data-compose-preview-close]").click();
+    var expected = await page.evaluate(async function(){
+      var expected = await window.__avl.generatePdfReport();
+      return Array.from(expected.bytes);
+    });
+    await page.locator('[data-compose-preview="pdf"]').click();
+    await until(async function(){
+      return (await page.evaluate(function(){ return window.__composePdfUrl; })).indexOf("blob:") === 0;
+    },15000);
+    var pdf = await page.evaluate(async function(){
+      var actual = new Uint8Array(await fetch(window.__composePdfUrl).then(function(response){
+        return response.arrayBuffer();
+      }));
+      return {
+        head:String.fromCharCode.apply(null,actual.subarray(0,8)),
+        bytes:Array.from(actual)
+      };
+    });
+    var same = pdf.bytes.length === expected.length;
+    if(same){
+      for(var i=0;i<pdf.bytes.length;i++){
+        if(pdf.bytes[i] !== expected[i]){ same = false; break; }
+      }
+    }
+    assert.match(pdf.head,/^%PDF-1\.4/,"the native preview must receive a real PDF");
+    assert.ok(expected.length > 2000,"the fixture report must be substantial");
+    assert.equal(same,true,"the native preview bytes must exactly match generatePdfReport");
+    await page.evaluate(function(){ window.__avl.closeComposePreview(); });
 
     var html = await page.evaluate(async function(){
       var opened = await window.__avl.openComposePreview("html");
       var frame = document.querySelector("[data-compose-preview-overlay] iframe");
-      var text = await fetch(frame.src).then(function(response){ return response.text(); });
-      return {opened:opened,text:text};
+      return {opened:opened,text:frame.srcdoc};
     });
     assert.equal(html.opened,true);
     assert.match(html.text,/^<!doctype html>/i,"the preview must be the real report document");
     assert.match(html.text,/Only the real builder emits this sentence\./,
       "the previewed HTML must carry the live executive summary");
     assert.match(html.text,/Compose Client/,"the previewed HTML must carry the live cover data");
+    assert.match(html.text,/src="data:image\/jpeg;base64,/,
+      "the preview must carry a self-contained photo source");
     assert.doesNotMatch(html.text,/"photos\//,
-      "every archive-relative photo path must be swapped for a preview blob URL");
+      "the preview must not depend on archive-relative photo paths");
     await page.locator("[data-compose-preview-close]").click();
   });
 });
