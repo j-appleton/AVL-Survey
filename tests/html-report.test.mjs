@@ -153,6 +153,21 @@ test("the archive HTML is local, escaped, searchable and ordered with the PDF an
       assert.match(await page.locator("body").innerText(),/Müller & Co <script id="injected">bad\(\)<\/script>/);
       assert.match(await page.locator("body").innerText(),/Studio < & "Café"/);
 
+      /* Embedded sources produce no network traffic, so networkidle no longer
+         implies the images decoded, and loading="lazy" defers anything below
+         the fold indefinitely. Force them all before asserting on decode. */
+      await page.evaluate(async function(){
+        var images = Array.prototype.slice.call(document.querySelectorAll(".photo-card img"));
+        images.forEach(function(image){ image.loading = "eager"; });
+        await Promise.all(images.map(function(image){
+          if(image.complete && image.naturalWidth > 0) return null;
+          return new Promise(function(resolve){
+            image.addEventListener("load",resolve,{once:true});
+            image.addEventListener("error",resolve,{once:true});
+          });
+        }));
+      });
+
       var cards = await page.locator(".photo-card").evaluateAll(function(nodes){
         return nodes.map(function(node){
           return {
@@ -300,6 +315,49 @@ test("a sixty-photo package carries a self-contained HTML report", async functio
     assert.doesNotMatch(html,/data-src="photos\//);
     assert.ok(Buffer.byteLength(html,"utf8") < 500000,
       "the fixture's sixty embedded photos must stay within a bounded artifact");
+  } finally {
+    await rm(scratch,{recursive:true,force:true});
+  }
+});
+
+test("the exported HTML embeds the chosen cover photograph, not a sibling path", async function(){
+  var state = htmlState();
+  state.visit.coverPhotoId = state.photos["1|audio"][1];
+  var prepared = await preparePackage(state);
+  var scratch = await mkdtemp(join(tmpdir(),"preplot-html-cover-"));
+  var extracted = join(scratch,"extracted");
+  var archivePath = join(scratch,"package.zip");
+  try {
+    await writeFile(archivePath,prepared.bytes);
+    await execFile("/usr/bin/unzip",["-qq",archivePath,"-d",extracted]);
+    var root = prepared.root;
+    var html = await readFile(join(extracted,root,root + ".html"),"utf8");
+
+    var hero = /<img class="hero-photo" src="([^"]*)"/.exec(html);
+    assert.ok(hero,"a chosen cover must render a hero photograph");
+    assert.match(hero[1],/^data:image\/[a-z0-9.+-]+;base64,/i,
+      "the cover must be embedded, not left folder-relative");
+    assert.doesNotMatch(html,/src="photos\//);
+    assert.doesNotMatch(html,/data-src="photos\//);
+
+    /* The cover is the same photograph the cards embed, at the same bytes. */
+    var coverEntry = prepared.manifest.filter(function(entry){
+      return entry.bucketIndex === 1 && entry.key === "1|audio";
+    })[0];
+    assert.ok(coverEntry,"the fixture must actually name a cover photo");
+    var cardSource = new RegExp(
+      'data-filename="' + coverEntry.filename.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") +
+      '"[\\s\\S]*?<img src="([^"]*)"'
+    ).exec(html);
+    assert.ok(cardSource,"the cover photo must also appear as a card");
+    assert.equal(hero[1],cardSource[1],
+      "the hero and the card must share one embedded source");
+
+    var stored = await readFile(join(extracted,root,"photos",coverEntry.filename));
+    assert.equal(
+      hero[1].split(",")[1],stored.toString("base64"),
+      "the embedded cover must be the full stored original, byte for byte"
+    );
   } finally {
     await rm(scratch,{recursive:true,force:true});
   }

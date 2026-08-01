@@ -470,3 +470,79 @@ test("preview overlays carry the real report bytes, not stand-in markup", async 
     await page.locator("[data-compose-preview-close]").click();
   });
 });
+
+/* --- guards that shipped without proof ----------------------------------- */
+
+test("the native PDF window is opened inside the trusted tap, before any await", async function(){
+  await withApp(async function(page){
+    await installPhotos(page,2);
+    await page.locator('[data-app-view="compose"]').click();
+    var result = await page.evaluate(function(){
+      /* click() dispatches synchronously, so anything the handler does before
+         its first await still runs while syncPhase is true. A window.open moved
+         below an await or a promise continuation records false, which is
+         exactly what a real browser refuses to honour. */
+      window.__openSyncPhase = true;
+      window.__openCalls = [];
+      window.open = function(){
+        window.__openCalls.push(window.__openSyncPhase === true);
+        return null;
+      };
+      document.querySelector('[data-compose-preview="pdf"]').click();
+      window.__openSyncPhase = false;
+      return true;
+    });
+    assert.equal(result,true);
+    await page.locator("[data-compose-preview-overlay]").waitFor({state:"visible"});
+    var calls = await page.evaluate(function(){ return window.__openCalls.slice(); });
+    assert.equal(calls.length,1,"exactly one native context may be requested per tap");
+    assert.equal(
+      calls[0],true,
+      "window.open must run in the same synchronous task as the tap, or iOS blocks it"
+    );
+    await page.locator("[data-compose-preview-close]").click();
+  });
+});
+
+test("the popup fallback offers the same PDF bytes through both controls", async function(){
+  await withApp(async function(page){
+    await installPhotos(page,2);
+    await page.evaluate(function(){
+      window.__avl.setComposeSummary("Fallback fixture summary.");
+    });
+    await page.locator('[data-app-view="compose"]').click();
+    await page.evaluate(function(){ window.open = function(){ return null; }; });
+    await page.locator('[data-compose-preview="pdf"]').click();
+    await page.locator("[data-compose-preview-overlay]").waitFor({state:"visible"});
+
+    var result = await page.evaluate(async function(){
+      var open = document.querySelector("[data-compose-pdf-open]");
+      var download = document.querySelector("[data-compose-preview-overlay] a[download]");
+      var expected = await window.__avl.generatePdfReport();
+      var actual = new Uint8Array(await fetch(open.getAttribute("href")).then(function(response){
+        return response.arrayBuffer();
+      }));
+      var same = actual.length === expected.bytes.length;
+      if(same){
+        for(var i=0;i<actual.length;i++){
+          if(actual[i] !== expected.bytes[i]){ same = false; break; }
+        }
+      }
+      return {
+        sameHref:open.getAttribute("href") === download.getAttribute("href"),
+        head:String.fromCharCode.apply(null,actual.subarray(0,8)),
+        length:actual.length,
+        expectedLength:expected.bytes.length,
+        identical:same
+      };
+    });
+    assert.equal(result.sameHref,true,"both controls must point at one document");
+    assert.match(result.head,/^%PDF-1\.4/);
+    assert.ok(result.expectedLength > 2000,"the fixture report must be substantial");
+    assert.equal(
+      result.identical,true,
+      "the fallback must serve exactly what generatePdfReport produced for this tap"
+    );
+    await page.locator("[data-compose-preview-close]").click();
+  });
+});
