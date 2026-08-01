@@ -134,7 +134,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v27";  // bump this for every runtime change
+var CACHE = "avl-survey-v28";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -347,3 +347,7 @@ Version 1.18.1 moves PDF preview into the device's native PDF viewer instead of
 an iOS-unfriendly embedded frame, locks and restores the app around HTML
 preview, and embeds included full-resolution photos directly in the HTML report
 so Files and Drive previews do not depend on sibling-file access.
+
+Version 1.18.2 keeps the HTML preview title and Close control below the iPhone
+status area, clear of every screen-edge safe area, with a full-size mobile tap
+target.

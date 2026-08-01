@@ -322,6 +322,46 @@ test("PDF uses a native viewer while HTML locks, closes and restores the app", a
   });
 });
 
+test("mobile HTML preview chrome stays inside the device safe area", async function(){
+  await withApp(async function(page){
+    await page.setViewportSize({width:390,height:844});
+    await installPhotos(page,1);
+    await page.locator('[data-app-view="compose"]').click();
+    await page.locator('[data-compose-preview="html"]').click();
+    await page.locator("[data-compose-preview-overlay] iframe").waitFor({state:"visible"});
+
+    var geometry = await page.evaluate(function(){
+      var overlay = document.querySelector("[data-compose-preview-overlay]");
+      var bar = overlay.querySelector(".compose-preview-bar");
+      var title = bar.querySelector("strong");
+      var close = overlay.querySelector("[data-compose-preview-close]");
+      /* Chromium has no display cutout in this fixture. Override the same
+         variables fed by env(safe-area-inset-*) on iOS so the actual geometry
+         remains testable instead of merely grepping a stylesheet. */
+      overlay.style.setProperty("--preview-safe-top","54px");
+      overlay.style.setProperty("--preview-safe-right","18px");
+      var titleRect = title.getBoundingClientRect();
+      var closeRect = close.getBoundingClientRect();
+      return {
+        titleRight:titleRect.right,
+        closeTop:closeRect.top,
+        closeRight:closeRect.right,
+        closeLeft:closeRect.left,
+        closeHeight:closeRect.height,
+        viewportWidth:window.innerWidth
+      };
+    });
+    assert.ok(geometry.closeTop >= 54,
+      "the close control must render below the simulated iPhone status area");
+    assert.ok(geometry.closeRight <= geometry.viewportWidth - 18,
+      "the close control must stay clear of the right safe area");
+    assert.ok(geometry.closeHeight >= 44,"the mobile close target must remain tappable");
+    assert.ok(geometry.titleRight <= geometry.closeLeft,
+      "the preview title must not collide with its close control");
+    await page.locator("[data-compose-preview-close]").click();
+  });
+});
+
 test("a blocked native PDF window falls back to an explicit open or download choice", async function(){
   await withApp(async function(page){
     await installPhotos(page,1);
