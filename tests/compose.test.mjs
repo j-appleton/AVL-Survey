@@ -358,6 +358,31 @@ test("mobile HTML preview chrome stays inside the device safe area", async funct
     assert.ok(geometry.closeHeight >= 44,"the mobile close target must remain tappable");
     assert.ok(geometry.titleRight <= geometry.closeLeft,
       "the preview title must not collide with its close control");
+
+    /* Four distinct insets, so a swapped or one-size-fits-all mapping cannot
+       hide behind an assertion that only checks a lower bound. */
+    var mapping = await page.evaluate(function(){
+      var overlay = document.querySelector("[data-compose-preview-overlay]");
+      var close = overlay.querySelector("[data-compose-preview-close]");
+      overlay.style.setProperty("--preview-safe-top","11px");
+      overlay.style.setProperty("--preview-safe-right","22px");
+      overlay.style.setProperty("--preview-safe-bottom","33px");
+      overlay.style.setProperty("--preview-safe-left","44px");
+      var style = getComputedStyle(overlay);
+      return {
+        padding:[style.paddingTop,style.paddingRight,style.paddingBottom,style.paddingLeft],
+        minHeight:getComputedStyle(close).minHeight
+      };
+    });
+    assert.deepEqual(
+      mapping.padding,["19px","30px","41px","52px"],
+      "each side must add its own inset to the 8px mobile gutter"
+    );
+    assert.equal(
+      mapping.minHeight,"44px",
+      "the close control must declare its own tap floor rather than inherit one from .btn"
+    );
+
     await page.locator("[data-compose-preview-close]").click();
   });
 });
