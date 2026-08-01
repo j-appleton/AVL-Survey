@@ -312,9 +312,12 @@ button.btn:active{transform:translateY(1px)}
 .compose-photo-meta{display:flex;gap:8px;align-items:baseline;justify-content:space-between;margin:8px 1px 6px}
 .compose-photo-meta b{color:var(--accent)}.compose-photo-meta span{font-size:10px;color:var(--muted);overflow-wrap:anywhere;text-align:right}
 .compose-photo .photo-caption{position:static;display:block;width:100%;margin:0 0 7px}.compose-include{width:100%}
-.compose-preview{position:fixed;inset:0;z-index:240;background:rgba(8,16,26,.88);display:grid;grid-template-rows:auto 1fr;padding:18px}
+.compose-preview{position:fixed;inset:0;z-index:240;background:rgba(8,16,26,.88);display:grid;grid-template-rows:auto minmax(0,1fr);padding:18px;overflow:hidden}
 .compose-preview-bar{display:flex;align-items:center;gap:12px;color:#fff;padding:0 0 10px}.compose-preview-bar strong{flex:1}
-.compose-preview iframe{width:100%;height:100%;border:0;border-radius:8px;background:#fff}
+.compose-preview iframe{width:100%;height:100%;min-height:0;border:0;border-radius:8px;background:#fff}
+.compose-preview-fallback{align-self:center;justify-self:center;width:min(520px,100%);background:var(--card);border-radius:14px;padding:24px;color:var(--ink)}
+.compose-preview-fallback h2{margin:0 0 8px}.compose-preview-fallback p{margin:0 0 18px;color:var(--muted)}
+.compose-preview-fallback .actions{display:flex;gap:8px;flex-wrap:wrap}.compose-preview-fallback .btn{text-decoration:none;text-align:center;flex:1;min-width:180px}
 @media(max-width:900px){.composegrid{grid-template-columns:1fr}.composeside{position:static}.compose-photo-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:540px){.compose-photo-list{grid-template-columns:1fr}.compose-preview{padding:8px}.compose-photo .ph{height:190px}}
 
@@ -374,7 +377,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.18.0";
+var APP_VERSION = "1.18.1";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -2470,8 +2473,20 @@ function preparePhotoPackage(){
       }
       var reportModel = buildReportModel(pkg.manifest);
       pkg.pendingReport = assemblePdfReportModel(reportModel,images);
-      pkg.pendingHtml = buildHtmlReport(reportModel);
-      setTimeout(finishPreparation,0);
+      return htmlPhotoSources(reportManifest,function(entry){
+        var entryIndex = pkg.manifest.indexOf(entry);
+        var photo = entryIndex < 0 ? null : pkg.photoEntries[entryIndex];
+        if(!photo) return Promise.reject(new Error("Package photo is missing"));
+        return {bytes:photo.bytes,mime:entry.mime};
+      }).then(function(photoSources){
+        if(preparedPhotoPackage !== pkg) return;
+        if(!photoPackageIsCurrent(pkg)){
+          stalePreparation();
+          return;
+        }
+        pkg.pendingHtml = buildHtmlReport(reportModel,photoSources);
+        setTimeout(finishPreparation,0);
+      });
     }).catch(failPreparation);
   }
   function nextPhoto(){
@@ -3514,45 +3529,120 @@ function render(){
 }
 
 var composePreviewUrls = [];
+var composeNativePdfUrls = [];
 var composePreviewFlight = null;
+var composePreviewScroll = null;
+var composePreviewReturnFocus = null;
 function revokeComposePreviewUrls(){
   composePreviewUrls.forEach(function(url){
     try { URL.revokeObjectURL(url); } catch(error){}
   });
   composePreviewUrls = [];
 }
+function retainNativePdfUrl(url){
+  var index = composePreviewUrls.indexOf(url);
+  if(index > -1) composePreviewUrls.splice(index,1);
+  composeNativePdfUrls.push(url);
+  setTimeout(function(){
+    var held = composeNativePdfUrls.indexOf(url);
+    if(held > -1) composeNativePdfUrls.splice(held,1);
+    try { URL.revokeObjectURL(url); } catch(error){}
+  },300000);
+}
 function closeComposePreview(){
+  var flight = composePreviewFlight;
   composePreviewFlight = null;
+  if(flight && flight.nativeWindow && !flight.ready){
+    try { if(!flight.nativeWindow.closed) flight.nativeWindow.close(); } catch(error){}
+  }
   var overlay = document.querySelector("[data-compose-preview-overlay]");
   if(overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
-  revokeComposePreviewUrls();
-}
-function showComposePreview(url,label,flight){
-  if(composePreviewFlight !== flight){
-    try { URL.revokeObjectURL(url); } catch(error){}
-    return false;
+  if(composePreviewScroll){
+    restorePhotoViewerScroll(composePreviewScroll);
+    composePreviewScroll = null;
   }
+  var returnFocus = composePreviewReturnFocus;
+  composePreviewReturnFocus = null;
+  revokeComposePreviewUrls();
+  if(returnFocus && document.documentElement.contains(returnFocus)){
+    try { returnFocus.focus(); } catch(error){}
+  }
+}
+function mountComposePreview(overlay){
+  overlay.setAttribute("role","dialog");
+  overlay.setAttribute("aria-modal","true");
+  document.body.appendChild(overlay);
+  composePreviewScroll = lockPhotoViewerScroll();
+  applyPhotoViewerScrollLock(composePreviewScroll);
+  overlay.onclick = function(event){
+    if(event.target === overlay) closeComposePreview();
+  };
+  overlay.onkeydown = function(event){
+    if(event.key === "Escape") closeComposePreview();
+  };
+}
+function showComposePreview(html,label,flight){
+  if(composePreviewFlight !== flight) return false;
   var overlay = document.createElement("div");
   overlay.className = "compose-preview";
   overlay.setAttribute("data-compose-preview-overlay","");
   overlay.innerHTML = '<div class="compose-preview-bar"><strong>'+esc(label)+'</strong>' +
     '<button type="button" class="btn" data-compose-preview-close>Close preview</button></div>' +
     '<iframe title="'+esc(label)+'" sandbox="allow-scripts"></iframe>';
-  document.body.appendChild(overlay);
-  overlay.querySelector("iframe").src = url;
+  mountComposePreview(overlay);
+  overlay.querySelector("iframe").srcdoc = html;
   overlay.querySelector("[data-compose-preview-close]").focus();
   return true;
+}
+function showComposePdfFallback(url,flight){
+  if(composePreviewFlight !== flight) return false;
+  var overlay = document.createElement("div");
+  overlay.className = "compose-preview";
+  overlay.setAttribute("data-compose-preview-overlay","");
+  overlay.setAttribute("aria-labelledby","composePdfFallbackTitle");
+  overlay.innerHTML = '<div class="compose-preview-bar"><strong>PDF report preview</strong>' +
+    '<button type="button" class="btn" data-compose-preview-close>Close preview</button></div>' +
+    '<div class="compose-preview-fallback"><h2 id="composePdfFallbackTitle">PDF ready</h2>' +
+    '<p>This browser could not open its PDF viewer automatically.</p><div class="actions">' +
+    '<a class="btn pri" data-compose-pdf-open target="_blank" rel="noopener" href="'+esc(url)+'">Open PDF preview</a>' +
+    '<a class="btn" download="'+esc(pdfSlug()+".pdf")+'" href="'+esc(url)+'">Download PDF</a>' +
+    '</div></div>';
+  mountComposePreview(overlay);
+  var openLink = overlay.querySelector("[data-compose-pdf-open]");
+  openLink.onclick = function(){ retainNativePdfUrl(url); };
+  openLink.focus();
+  return true;
+}
+function htmlPhotoSources(manifest,sourceProvider){
+  var sources = Object.create(null);
+  var chain = Promise.resolve();
+  manifest.forEach(function(entry,index){
+    chain = chain.then(function(){
+      return Promise.resolve(sourceProvider(entry,index)).then(function(source){
+        if(!source) throw new Error("HTML photo is missing");
+        var blob = source.blob || new Blob([source.bytes],{type:source.mime || entry.mime});
+        return blobToDataUrl(blob);
+      }).then(function(dataUrl){
+        sources[entry.filename] = dataUrl;
+      });
+    });
+  });
+  return chain.then(function(){ return sources; });
 }
 function openComposePreview(kind){
   if(kind !== "pdf" && kind !== "html") return Promise.resolve(false);
   if(composePreviewFlight) return Promise.resolve(false);
   closeComposePreview();
-  var flight = {};
+  composePreviewReturnFocus = document.activeElement;
+  var flight = {nativeWindow:null,ready:false};
   composePreviewFlight = flight;
   if(kind === "pdf"){
+    try { flight.nativeWindow = window.open("","_blank"); }
+    catch(error){ flight.nativeWindow = null; }
     var pdfPreview;
     try { pdfPreview = generatePdfReport(); }
     catch(error){
+      if(flight.nativeWindow){ try { flight.nativeWindow.close(); } catch(closeError){} }
       composePreviewFlight = null;
       toast("The PDF preview could not be built.");
       return Promise.resolve(false);
@@ -3561,8 +3651,19 @@ function openComposePreview(kind){
       if(composePreviewFlight !== flight) return false;
       var url = URL.createObjectURL(new Blob([report.bytes],{type:"application/pdf"}));
       composePreviewUrls.push(url);
-      return showComposePreview(url,"PDF report preview",flight);
+      if(flight.nativeWindow && !flight.nativeWindow.closed){
+        try {
+          flight.nativeWindow.location.replace(url);
+          retainNativePdfUrl(url);
+          flight.ready = true;
+          composePreviewFlight = null;
+          composePreviewReturnFocus = null;
+          return true;
+        } catch(error){}
+      }
+      return showComposePdfFallback(url,flight);
     }).catch(function(){
+      if(flight.nativeWindow){ try { flight.nativeWindow.close(); } catch(closeError){} }
       if(composePreviewFlight === flight){
         composePreviewFlight = null;
         toast("The PDF preview could not be built.");
@@ -3571,32 +3672,25 @@ function openComposePreview(kind){
       return false;
     });
   }
-  var manifest, reportManifest, html;
+  var manifest, reportManifest, reportModel;
   try {
     manifest = photoManifest();
     reportManifest = reportPhotoManifest(manifest);
-    html = buildHtmlReport(buildReportModel(manifest));
+    reportModel = buildReportModel(manifest);
   } catch(error){
     composePreviewFlight = null;
     toast("The HTML preview could not be built.");
     return Promise.resolve(false);
   }
-  var chain = Promise.resolve();
-  reportManifest.forEach(function(entry){
-    chain = chain.then(function(){
-      return hydratePhotoSource(entry.key,entry.bucketIndex).then(function(source){
-        if(composePreviewFlight !== flight) throw new Error("Preview closed");
-        var photoUrl = URL.createObjectURL(source.blob);
-        composePreviewUrls.push(photoUrl);
-        html = html.split("photos/" + entry.filename).join(photoUrl);
-      });
+  return htmlPhotoSources(reportManifest,function(entry){
+    return hydratePhotoSource(entry.key,entry.bucketIndex).then(function(source){
+      if(composePreviewFlight !== flight) throw new Error("Preview closed");
+      return source;
     });
-  });
-  return chain.then(function(){
+  }).then(function(photoSources){
     if(composePreviewFlight !== flight) return false;
-    var url = URL.createObjectURL(new Blob([html],{type:"text/html;charset=utf-8"}));
-    composePreviewUrls.push(url);
-    return showComposePreview(url,"HTML report preview",flight);
+    var html = buildHtmlReport(reportModel,photoSources);
+    return showComposePreview(html,"HTML report preview",flight);
   }).catch(function(){
     if(composePreviewFlight === flight){
       composePreviewFlight = null;
@@ -5590,7 +5684,11 @@ function reportHtmlEsc(value){
     .replace(/"/g,"&quot;")
     .replace(/'/g,"&#39;");
 }
-function buildHtmlReport(report){
+function reportHtmlPhotoSource(photo,photoSources){
+  if(photoSources && photoSources[photo.filename]) return photoSources[photo.filename];
+  return "photos/" + photo.filename;
+}
+function buildHtmlReport(report,photoSources){
   var h = [];
   var coverPhoto = report.cover.coverPhoto === null
     ? null
@@ -5669,7 +5767,7 @@ function buildHtmlReport(report){
   h.push("</style></head><body>");
   h.push('<header class="hero">');
   if(coverPhoto){
-    h.push('<img class="hero-photo" src="photos/' + reportHtmlEsc(coverPhoto.filename) +
+    h.push('<img class="hero-photo" src="' + reportHtmlEsc(reportHtmlPhotoSource(coverPhoto,photoSources)) +
       '" alt="Cover photograph">');
   }
   h.push('<div class="hero-copy"><div class="rule"></div><div class="eyebrow">PrePlot site visit report</div>');
@@ -5678,7 +5776,9 @@ function buildHtmlReport(report){
   h.push('<div class="meta"><span>' + reportHtmlEsc(report.cover.date) + "</span><span>" +
     reportHtmlEsc(report.cover.surveyor) + "</span><span>" + report.cover.photoCount +
     " photograph" + (report.cover.photoCount === 1 ? "" : "s") + "</span></div>");
-  h.push('<p class="local-note">Photos load from the photos folder beside this file.</p></div></header>');
+  h.push('<p class="local-note">' + (photoSources
+    ? 'Photographs are embedded in this report at full survey resolution.'
+    : 'Photos load from the photos folder beside this file.') + '</p></div></header>');
   h.push('<main class="shell">');
 
   if(report.summary){
@@ -5755,7 +5855,7 @@ function buildHtmlReport(report){
   if(report.photos.length){
     h.push('<div class="photos">');
     report.photos.forEach(function(photo,index){
-      var path = "photos/" + photo.filename;
+      var path = reportHtmlPhotoSource(photo,photoSources);
       h.push('<article class="photo-card" id="photo-' + reportHtmlEsc(photo.ref) +
         '" data-ref="' + reportHtmlEsc(photo.ref) + '" data-filename="' +
         reportHtmlEsc(photo.filename) + '" data-context="' + reportHtmlEsc(photo.context) +

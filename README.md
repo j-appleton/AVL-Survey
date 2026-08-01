@@ -80,7 +80,8 @@ it works with no signal — the service worker caches everything on first load.
 - **Compose** is the laptop-friendly handoff workspace: refine captions, choose
   the cover, write a short executive summary, exclude weak photos from the PDF
   and HTML report without deleting them from the archive, and preview both real
-  report files before rebuilding the package.
+  report files before rebuilding the package. PDF previews open in the device's
+  native viewer; HTML previews stay in the app with a reliable close path.
 - After capture, the app stays in the survey and reports the batch once. Tap any
   thumbnail when you want the full viewer, then tap **Save photo…** to open the
   device share sheet and choose **Save Image** on iPhone or **Photos / Gallery**
@@ -98,8 +99,9 @@ it works with no signal — the service worker caches everything on first load.
   survey photo under its handoff filename, compact survey JSON that references
   those packaged photo files, an Excel-friendly photo manifest, a plain-text
   CRM note containing every survey field, a designed
-  site-visit PDF, and a searchable interactive HTML report whose thumbnails
-  open the matching full-resolution files from the adjacent `photos` folder.
+  site-visit PDF, and a searchable interactive HTML report with every included
+  full-resolution photo embedded directly in the file. The separate `photos`
+  folder still carries every original, including photos excluded from reports.
   The complete ZIP can be imported back into PrePlot as the survey backup.
   **Share package…** opens the device share
   sheet for Google Drive; **Download package instead** is always available.
@@ -132,7 +134,7 @@ The app then computes:
 Edit the app files, then bump the cache version in `sw.js`:
 
 ```js
-var CACHE = "avl-survey-v26";  // bump this for every runtime change
+var CACHE = "avl-survey-v27";  // bump this for every runtime change
 ```
 
 The page checks `sw.js` without using the browser's HTTP cache. When a changed
@@ -182,9 +184,9 @@ The browser suites start the app on localhost and verify:
   every source byte and manifest filename in canonical order, carries compact
   survey JSON without a second base64 copy, and writes RFC-compatible CSV with
   a UTF-8 BOM
-- the interactive HTML report stays text-sized, escapes survey content, makes
-  no external requests, follows PDF/manifest photo order, and opens the exact
-  full-resolution file named on each card
+- the interactive HTML report embeds its included full-resolution photos,
+  escapes survey content, makes no external requests, follows PDF/manifest
+  photo order, and opens the exact source shown on each card
 - package sharing passes the exact prepared ZIP to `canShare()` and `share()`
   inside the trusted tap, blocks overlaps, permits cancellation and retry, and
   never mutates the survey or makes an unverifiable success claim
@@ -316,8 +318,8 @@ sheets, explicit measurement qualifiers, and filenames matching the full photo
 copies in the ZIP. Report renditions are 600px JPEGs used only inside the PDF;
 the archive’s `photos/` files remain byte-identical to the stored survey images.
 
-Version 1.14 adds a self-contained interactive HTML report beside the PDF. It
-uses the same report model, remains searchable, and loads full-size images from
+Version 1.14 adds an interactive HTML report beside the PDF. It uses the same
+report model, remains searchable, and originally loaded full-size images from
 the adjacent `photos/` folder without network requests.
 
 Version 1.15 makes the complete ZIP a restorable artifact. The importer validates
@@ -340,3 +342,8 @@ executive summary and stable-ID report exclusions; exclusions never renumber the
 manifest or remove originals from the archive. PDF and HTML previews use the
 real report builders, package imports remap exclusions to fresh photo IDs, and
 orphan caption/exclusion keys are repaired instead of blocking the survey.
+
+Version 1.18.1 moves PDF preview into the device's native PDF viewer instead of
+an iOS-unfriendly embedded frame, locks and restores the app around HTML
+preview, and embeds included full-resolution photos directly in the HTML report
+so Files and Drive previews do not depend on sibling-file access.

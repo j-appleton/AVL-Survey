@@ -62,7 +62,7 @@ function htmlState(){
   };
 }
 
-async function preparePackage(){
+async function preparePackage(state){
   var server = await serve(ROOT);
   var browser = await launchBrowser();
   try {
@@ -72,7 +72,7 @@ async function preparePackage(){
     await page.waitForFunction(function(){ return !!window.__avl; });
     assert.equal(await page.evaluate(function(state){
       return window.__avl.applyImport(JSON.stringify(state));
-    },htmlState()),true);
+    },state || htmlState()),true);
     var result = await page.evaluate(function(){
       var manifest = window.__avl.photoManifest();
       window.__avl.preparePhotoPackage();
@@ -119,14 +119,15 @@ test("the archive HTML is local, escaped, searchable and ordered with the PDF an
     var htmlPath = join(extracted,root,root + ".html");
     var html = await readFile(htmlPath,"utf8");
     assert.match(html,/<!doctype html><html lang="en"><head><meta charset="utf-8">/);
-    assert.match(html,/Photos load from the photos folder beside this file\./);
-    assert.doesNotMatch(html,/data:image\//);
+    assert.match(html,/Photographs are embedded in this report/);
+    assert.match(html,/src="data:image\//);
+    assert.doesNotMatch(html,/src="photos\//);
+    assert.doesNotMatch(html,/data-src="photos\//);
     assert.doesNotMatch(html,/(?:https?:|file:)\/\//i);
-    assert.ok(Buffer.byteLength(html,"utf8") < 50000);
+    assert.ok(Buffer.byteLength(html,"utf8") < 250000);
 
     for(var i=0;i<prepared.manifest.length;i++){
       var entry = prepared.manifest[i];
-      assert.match(html,new RegExp('src="photos/' + entry.filename.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + '"'));
       var photo = await readFile(join(extracted,root,"photos",entry.filename));
       assert.ok(photo.length > 0);
     }
@@ -152,12 +153,29 @@ test("the archive HTML is local, escaped, searchable and ordered with the PDF an
       assert.match(await page.locator("body").innerText(),/Müller & Co <script id="injected">bad\(\)<\/script>/);
       assert.match(await page.locator("body").innerText(),/Studio < & "Café"/);
 
+      /* Embedded sources produce no network traffic, so networkidle no longer
+         implies the images decoded, and loading="lazy" defers anything below
+         the fold indefinitely. Force them all before asserting on decode. */
+      await page.evaluate(async function(){
+        var images = Array.prototype.slice.call(document.querySelectorAll(".photo-card img"));
+        images.forEach(function(image){ image.loading = "eager"; });
+        await Promise.all(images.map(function(image){
+          if(image.complete && image.naturalWidth > 0) return null;
+          return new Promise(function(resolve){
+            image.addEventListener("load",resolve,{once:true});
+            image.addEventListener("error",resolve,{once:true});
+          });
+        }));
+      });
+
       var cards = await page.locator(".photo-card").evaluateAll(function(nodes){
         return nodes.map(function(node){
           return {
             ref:node.getAttribute("data-ref"),
             filename:node.getAttribute("data-filename"),
-            src:node.querySelector("img").getAttribute("src")
+            src:node.querySelector("img").getAttribute("src"),
+            full:node.querySelector("button").getAttribute("data-src"),
+            loaded:node.querySelector("img").naturalWidth > 0
           };
         });
       });
@@ -170,16 +188,16 @@ test("the archive HTML is local, escaped, searchable and ordered with the PDF an
         prepared.pdfOrder.map(function(card){ return card.ref; })
       );
       cards.forEach(function(card){
-        assert.equal(card.src,"photos/" + card.filename);
-        assert.equal(card.src.charAt(0) !== "/",true);
+        assert.match(card.src,/^data:image\/[a-z0-9.+-]+;base64,/i);
+        assert.equal(card.full,card.src,"the card and lightbox must use the same embedded full-size source");
+        assert.equal(card.loaded,true,"embedded archive photos must decode without sibling-file access");
       });
       var allImageSources = await page.locator("img[src]").evaluateAll(function(images){
         return images.map(function(image){ return image.getAttribute("src"); });
       });
       for(var sourceIndex=0;sourceIndex<allImageSources.length;sourceIndex++){
         var source = allImageSources[sourceIndex];
-        assert.match(source,/^photos\/[^/]+$/);
-        await readFile(join(extracted,root,source));
+        assert.match(source,/^data:image\/[a-z0-9.+-]+;base64,/i);
       }
 
       var roomLink = page.locator(".photo-links a").first();
@@ -193,7 +211,7 @@ test("the archive HTML is local, escaped, searchable and ordered with the PDF an
       assert.equal(await page.locator("#viewer-ref").textContent(),"PHOTO " + prepared.manifest[1].ref);
       assert.equal(
         await page.locator("#viewer-image").getAttribute("src"),
-        "photos/" + prepared.manifest[1].filename
+        cards[1].src
       );
       assert.equal(
         await page.locator("#viewer-image").getAttribute("src"),
@@ -230,7 +248,7 @@ test("the archive HTML is local, escaped, searchable and ordered with the PDF an
   }
 });
 
-test("a sixty-photo HTML report stays text-sized and never inlines photo bytes", async function(){
+test("the model-only HTML template stays text-sized until portable sources are supplied", async function(){
   var photos = [];
   for(var i=0;i<60;i++) photos.push(JPG);
   var server = await serve(ROOT);
@@ -274,5 +292,73 @@ test("a sixty-photo HTML report stays text-sized and never inlines photo bytes",
   } finally {
     await browser.close();
     await server.close();
+  }
+});
+
+test("a sixty-photo package carries a self-contained HTML report", async function(){
+  var photos = [];
+  for(var i=0;i<60;i++) photos.push(svg(i % 2 ? "#16283C" : "#2C7A7B","PHOTO " + (i+1)));
+  var prepared = await preparePackage({
+    visit:{client:"Sixty photos",site:"Portable fixture",date:"2026-07-31"},
+    log:{},rooms:[],photos:{"log|main":photos},skipped:{},ui:{}
+  });
+  var scratch = await mkdtemp(join(tmpdir(),"preplot-html-60-"));
+  var extracted = join(scratch,"extracted");
+  var archivePath = join(scratch,"package.zip");
+  try {
+    await writeFile(archivePath,prepared.bytes);
+    await execFile("/usr/bin/unzip",["-qq",archivePath,"-d",extracted]);
+    var html = await readFile(join(extracted,prepared.root,prepared.root + ".html"),"utf8");
+    assert.equal((html.match(/<img src="data:image\/svg\+xml;base64,/g) || []).length,60);
+    assert.equal((html.match(/ data-src="data:image\/svg\+xml;base64,/g) || []).length,60);
+    assert.doesNotMatch(html,/src="photos\//);
+    assert.doesNotMatch(html,/data-src="photos\//);
+    assert.ok(Buffer.byteLength(html,"utf8") < 500000,
+      "the fixture's sixty embedded photos must stay within a bounded artifact");
+  } finally {
+    await rm(scratch,{recursive:true,force:true});
+  }
+});
+
+test("the exported HTML embeds the chosen cover photograph, not a sibling path", async function(){
+  var state = htmlState();
+  state.visit.coverPhotoId = state.photos["1|audio"][1];
+  var prepared = await preparePackage(state);
+  var scratch = await mkdtemp(join(tmpdir(),"preplot-html-cover-"));
+  var extracted = join(scratch,"extracted");
+  var archivePath = join(scratch,"package.zip");
+  try {
+    await writeFile(archivePath,prepared.bytes);
+    await execFile("/usr/bin/unzip",["-qq",archivePath,"-d",extracted]);
+    var root = prepared.root;
+    var html = await readFile(join(extracted,root,root + ".html"),"utf8");
+
+    var hero = /<img class="hero-photo" src="([^"]*)"/.exec(html);
+    assert.ok(hero,"a chosen cover must render a hero photograph");
+    assert.match(hero[1],/^data:image\/[a-z0-9.+-]+;base64,/i,
+      "the cover must be embedded, not left folder-relative");
+    assert.doesNotMatch(html,/src="photos\//);
+    assert.doesNotMatch(html,/data-src="photos\//);
+
+    /* The cover is the same photograph the cards embed, at the same bytes. */
+    var coverEntry = prepared.manifest.filter(function(entry){
+      return entry.bucketIndex === 1 && entry.key === "1|audio";
+    })[0];
+    assert.ok(coverEntry,"the fixture must actually name a cover photo");
+    var cardSource = new RegExp(
+      'data-filename="' + coverEntry.filename.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") +
+      '"[\\s\\S]*?<img src="([^"]*)"'
+    ).exec(html);
+    assert.ok(cardSource,"the cover photo must also appear as a card");
+    assert.equal(hero[1],cardSource[1],
+      "the hero and the card must share one embedded source");
+
+    var stored = await readFile(join(extracted,root,"photos",coverEntry.filename));
+    assert.equal(
+      hero[1].split(",")[1],stored.toString("base64"),
+      "the embedded cover must be the full stored original, byte for byte"
+    );
+  } finally {
+    await rm(scratch,{recursive:true,force:true});
   }
 });
