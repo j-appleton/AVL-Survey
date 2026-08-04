@@ -73,7 +73,9 @@ it works with no signal — the service worker caches everything on first load.
   **Photos** tab. Every room section stays visible there as a direct capture
   checklist, including empty sections; there is no destination picker to hide
   the required shot list. Tap any thumbnail to inspect the full stored survey
-  image without the thumbnail crop, then move through the other photos in that section.
+  image without the thumbnail crop, then move through the other photos in that
+  section. On a laptop, drag the handle on a photo to reorder it within that
+  section; the package, PDF, and HTML report follow the same order.
 - The top of the Photos tab makes the report cover an explicit decision. Choose
   a photo there or from the full-screen viewer; without one, the PDF uses a
   deliberate plain navy cover rather than silently taking the first photo.
@@ -351,3 +353,6 @@ so Files and Drive previews do not depend on sibling-file access.
 Version 1.18.2 keeps the HTML preview title and Close control below the iPhone
 status area, clear of every screen-edge safe area, with a full-size mobile tap
 target.
+
+Version 1.19 adds desktop photo reordering within each capture section and keeps
+the Add Photo control on its own row below thumbnails and captions.
