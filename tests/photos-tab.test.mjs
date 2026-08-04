@@ -32,14 +32,14 @@ function state(){
   };
 }
 
-async function withPhotosApp(run){
+async function withPhotosApp(run,options){
   var server = await serve(ROOT);
   var browser = await launchBrowser();
   try {
     var context = await browser.newContext({
       serviceWorkers:"block",
-      viewport:{width:390,height:844},
-      hasTouch:true
+      viewport:options && options.desktop ? {width:1100,height:844} : {width:390,height:844},
+      hasTouch:!(options && options.desktop)
     });
     var page = await context.newPage();
     await page.goto(server.origin + "/", {waitUntil:"domcontentloaded"});
@@ -56,6 +56,47 @@ async function withPhotosApp(run){
     await browser.close();
     await server.close();
   }
+}
+
+async function installDescriptorPhotos(page,count){
+  return page.evaluate(async function(config){
+    function descriptor(record){
+      return {
+        id:record.id,
+        mime:record.mime,
+        bytes:record.bytes,
+        width:record.width,
+        height:record.height
+      };
+    }
+    var sources = ["AQ==","Ag==","Aw==","BA=="];
+    var records = [];
+    for(var i=0;i<config.count;i++){
+      records.push(await window.AVLPhotoStore.addDataUrl(
+        "data:image/jpeg;base64," + sources[i],
+        30 + i,
+        20 + i
+      ));
+    }
+    var audio = records.map(descriptor);
+    var captions = {};
+    audio.forEach(function(photo,index){ captions[photo.id] = "Caption " + (index + 1); });
+    await window.__avl.setDescriptorStateForTest({
+      visit:{
+        client:"Reorder client",
+        site:"Reorder site",
+        date:"2026-08-04",
+        coverPhotoId:audio.length ? audio[0].id : ""
+      },
+      log:{},
+      rooms:[{id:1,d:{name:"Boardroom"}}],
+      photos:{"1|audio":audio},
+      captions:captions,
+      skipped:{},
+      ui:{}
+    });
+    return {ids:audio.map(function(photo){ return photo.id; })};
+  },{count:count});
 }
 
 test("sticky Photos view follows the canonical manifest without entering survey state", async function(){
@@ -246,5 +287,64 @@ test("an in-flight batch survives a view switch and renders into the current vie
     assert.equal(result.view,"photos");
     assert.equal(result.count,1);
     assert.equal(result.visible,1);
+  });
+});
+
+test("desktop photo dragging changes canonical order without changing photo identity", async function(){
+  await withPhotosApp(async function(page){
+    var installed = await installDescriptorPhotos(page,3);
+    await page.locator('[data-app-view="photos"]').click();
+
+    var firstHandle = page.locator('[data-photos="1|audio"] [data-photo-drag-handle]').first();
+    var thirdPhoto = page.locator('[data-photos="1|audio"] .photoitem').nth(2);
+    await firstHandle.dragTo(thirdPhoto);
+
+    var result = await page.evaluate(function(){
+      var list = window.__avl.S().photos["1|audio"];
+      return {
+        ids:list.map(function(photo){ return photo.id; }),
+        captions:list.map(function(photo){ return window.__avl.photoCaption(photo); }),
+        cover:window.__avl.S().visit.coverPhotoId,
+        manifest:window.__avl.photoManifest().map(function(entry){
+          return window.__avl.S().photos[entry.key][entry.bucketIndex].id;
+        })
+      };
+    });
+    assert.deepEqual(result.ids,[installed.ids[1],installed.ids[2],installed.ids[0]]);
+    assert.deepEqual(result.manifest,result.ids);
+    assert.deepEqual(result.captions,["Caption 2","Caption 3","Caption 1"]);
+    assert.equal(result.cover,installed.ids[0]);
+  },{desktop:true});
+});
+
+test("mobile Add Photo occupies its own row below a captioned photo", async function(){
+  await withPhotosApp(async function(page){
+    await installDescriptorPhotos(page,1);
+    await page.locator('[data-app-view="photos"]').click();
+
+    var geometry = await page.evaluate(function(){
+      var strip = document.querySelector('[data-photos="1|audio"]');
+      var item = strip.querySelector(".photoitem").getBoundingClientRect();
+      var caption = strip.querySelector("[data-photo-caption]").getBoundingClientRect();
+      var add = strip.querySelector("[data-addph]").getBoundingClientRect();
+      return {
+        item:{left:item.left,top:item.top,right:item.right,bottom:item.bottom},
+        caption:{left:caption.left,top:caption.top,right:caption.right,bottom:caption.bottom},
+        add:{left:add.left,top:add.top,right:add.right,bottom:add.bottom}
+      };
+    });
+    assert.ok(
+      geometry.add.top >= geometry.item.bottom + 7,
+      "Add Photo must start on a new row beneath the photo and caption"
+    );
+    assert.ok(
+      geometry.caption.right <= geometry.item.right + 1,
+      "the caption must remain inside its photo row: " + JSON.stringify(geometry)
+    );
+    assert.equal(
+      geometry.caption.bottom > geometry.add.top && geometry.caption.top < geometry.add.bottom,
+      false,
+      "the caption must not obscure Add Photo"
+    );
   });
 });
