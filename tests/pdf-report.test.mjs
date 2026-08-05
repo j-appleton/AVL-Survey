@@ -217,6 +217,40 @@ test("designed report is structurally valid, mixed-orientation and text-traceabl
   });
 });
 
+test("wrapped overview text resets header letterspacing before it is drawn", async function(){
+  await withPdfApp({
+    visit:{client:"Wrap fixture",site:"Long notes",date:"2026-08-05"},
+    log:{},rooms:[],photos:{},skipped:{},ui:{}
+  },async function(page){
+    var result = await page.evaluate(function(){
+      var body = "Will need to coordinate specifically with their open schedule as business will be active and their client base will be sensitive. This second sentence makes the wrapping unmistakable.";
+      var documentModel = window.__avl.buildReportDocument({
+        summary:"",
+        cover:{
+          client:"Wrap fixture",site:"Long notes",date:"2026-08-05",
+          surveyor:"Jonathan",photoCount:0,coverPhoto:null
+        },
+        overview:[{title:"Site logistics",body:body}],
+        rooms:[],
+        photos:[]
+      },[]);
+      var overview = documentModel.pages.filter(function(candidate){
+        return candidate.kind === "overview";
+      })[0];
+      return overview.commands.filter(function(command){
+        return command.indexOf("/F1 9.50 Tf") > -1;
+      });
+    });
+    assert.ok(result.length > 1,"the fixture must wrap across multiple body lines");
+    result.forEach(function(command){
+      assert.match(
+        command,/ 0\.00 Tc /,
+        "ordinary body text must explicitly clear the page header's letterspacing"
+      );
+    });
+  });
+});
+
 test("cover identity survives portable import, reordering and deliberate deletion", async function(){
   await withPdfApp(reportState(),async function(page){
     await page.locator('[data-app-view="photos"]').click();

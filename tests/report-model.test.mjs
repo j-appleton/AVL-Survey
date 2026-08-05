@@ -79,9 +79,9 @@ test("report-model extraction preserves the fixed PDF byte for byte", async func
       return Array.from(report.bytes);
     },JPG_BYTES);
     var hash = createHash("sha256").update(Buffer.from(bytes)).digest("hex");
-    /* D0 established the original byte snapshot. D1 deliberately changes
-       only the product capitalization carried by the PDF metadata. */
-    assert.equal(hash,"52d13f185a35a94ccd581d2feca72238fac2b34b38265bebece96d9bcc23145d");
+    /* D0 established the original byte snapshot. The 1.19.1 snapshot also
+       pins the explicit character-spacing reset on every text object. */
+    assert.equal(hash,"f38eb4e3bd9ef9d5088fd375104978b32c5c8f922270dcd4d75c899fbe05036b");
   });
 });
 
