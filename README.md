@@ -1,8 +1,9 @@
 # PrePlot
 
 PrePlot is a pre-install AV site survey app. It runs entirely in the browser, works offline,
-stores everything on your phone. No accounts or backend; data leaves the device
-only when you explicitly prepare and share the complete package.
+and stores the working survey on your device. An optional one-time recovery connection can
+also keep a verified private copy in Cloudflare R2; local capture never waits for it, and the
+Drive package remains the permanent job record.
 
 ## Why it needs hosting
 
@@ -21,11 +22,12 @@ GitHub Pages is free and takes about five minutes.
    - Set it to **Public** (Pages requires this on free accounts)
    - Tick **Add a README file**, then **Create repository**
 2. In the new repo click **Add file** → **Upload files**.
-3. Upload **all ten files** from this bundle:
+3. Upload **all eleven files** from this bundle:
    - `index.html`
    - `photo-store.js`
    - `photo-captions.js`
    - `compose.js`
+   - `recovery.js`
    - `sw.js`
    - `manifest.webmanifest`
    - `icon-192.png`

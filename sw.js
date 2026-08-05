@@ -1,6 +1,6 @@
 /* PrePlot — offline service worker.
    Bump CACHE when you change any app file; old caches are purged on activate. */
-var CACHE = "avl-survey-v35";
+var CACHE = "avl-survey-v36";
 
 var ASSETS = [
   "./",
@@ -8,6 +8,7 @@ var ASSETS = [
   "./photo-store.js",
   "./photo-captions.js",
   "./compose.js",
+  "./recovery.js",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
