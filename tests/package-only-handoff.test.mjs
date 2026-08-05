@@ -65,7 +65,8 @@ function crmState(){
       surveyor:"",
       contact:"",
       itc:"",
-      scope:"Replace the room system.\nCoordinate around classes."
+      scope:"Replace the room system.\nCoordinate around classes.",
+      budget:"$35,000 - $50,000"
     },
     log:{
       access:"issue",
@@ -257,6 +258,34 @@ test("CRM note walks canonical fields, preserves blanks and ships once at the ar
     assert.doesNotMatch(archive.text,/data:image/);
     assert.ok(archive.text.length < 20000);
     assert.equal(await surveyStateSnapshot(page),before);
+  });
+});
+
+test("budget stays internal to the app, package data and CRM note", async function(){
+  await withApp(crmState(),async function(page){
+    var result = await page.evaluate(async function(){
+      var input = document.querySelector('[data-scope="visit"][data-k="budget"]');
+      var model = window.__avl.buildReportModel();
+      var html = window.__avl.buildHtmlReport(model);
+      var pdf = await window.__avl.generatePdfReport();
+      return {
+        field:input ? input.closest(".f").innerText : "",
+        value:input ? input.value : "",
+        crm:window.__avl.crmNoteText(),
+        packaged:window.__avl.packageEnvelope([]).data.visit.budget,
+        model:JSON.stringify(model),
+        html:html,
+        pdf:new TextDecoder("latin1").decode(pdf.bytes)
+      };
+    });
+    assert.match(result.field,/Budget \/ approved range/);
+    assert.match(result.field,/Internal only/);
+    assert.equal(result.value,"$35,000 - $50,000");
+    assert.match(result.crm,/Budget \/ approved range: \$35,000 - \$50,000/);
+    assert.equal(result.packaged,"$35,000 - $50,000");
+    [result.model,result.html,result.pdf].forEach(function(output){
+      assert.doesNotMatch(output,/35,000|50,000|Budget \/ approved range/);
+    });
   });
 });
 
