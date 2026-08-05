@@ -388,7 +388,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.20.0";
+var APP_VERSION = "1.20.1";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -5324,9 +5324,9 @@ function numberedCard(page,x,y,w,n,title,body){
 }
 function pdfTableRowLayout(row,w){
   var labelW = Math.min(150,w * 0.46);
-  var labelLines = pdfWrapLines(row.label,7.5,true,labelW-14,0).slice(0,2);
+  var labelLines = pdfWrapLines(row.label,7.5,true,labelW-14,0);
   var valueX = labelW + 8;
-  var valueLines = pdfWrapLines(row.value,8.5,false,w-valueX-7,0).slice(0,2);
+  var valueLines = pdfWrapLines(row.value,8.5,false,w-valueX-7,0);
   return {
     labelW:labelW,
     valueX:valueX,
@@ -5636,18 +5636,36 @@ function reportDrawTileRow(page,tiles,top){
   return top + 92;
 }
 function reportDrawInfoBlock(page,x,y,w,title,rows){
-  var h = 104;
+  var layout = reportInfoBlockLayout(rows,w);
+  var h = layout.height;
   card(page,x,y,w,h);
   cardHeader(page,x,y,w,title);
-  if(!rows.length){
+  if(!layout.rows.length){
     pdfDrawText(page,"None recorded",x+10,y+39,9.5,false,PDF_COLORS.muted);
     return h;
   }
-  rows.slice(0,3).forEach(function(row,index){
-    var text = row.label + ": " + row.value;
-    pdfDrawWrapped(page,text,x+10,y+35+index*21,w-20,9.5,false,PDF_COLORS.ink,11,2);
+  var top = y + 35;
+  layout.rows.forEach(function(row){
+    row.lines.forEach(function(line,index){
+      pdfDrawText(page,line,x+10,top+index*11,9.5,false,PDF_COLORS.ink);
+    });
+    top += row.lines.length * 11 + 6;
   });
   return h;
+}
+function reportInfoBlockLayout(rows,w){
+  var contentHeight = 0;
+  var layoutRows = rows.map(function(row,index){
+    var lines = pdfWrapLines(row.label + ": " + row.value,9.5,false,w-20,0);
+    if(!lines.length) lines = [""];
+    contentHeight += lines.length * 11;
+    if(index < rows.length-1) contentHeight += 6;
+    return {lines:lines};
+  });
+  return {
+    rows:layoutRows,
+    height:Math.max(104,35 + contentHeight + 12)
+  };
 }
 function reportSummaryLines(value,maxWidth){
   maxWidth = maxWidth || 532;
@@ -5753,13 +5771,30 @@ function buildReportDocument(report,images){
     y = reportDrawTileRow(page,lightTiles,y);
 
     var rows = room.rows;
-    var tablePage = reportTakeTableColumns(rows,0,258,735-y-116);
+    var infoHeight = Math.max(
+      reportInfoBlockLayout(room.cards[0].bullets,258).height,
+      reportInfoBlockLayout(room.cards[1].bullets,258).height
+    );
+    var infoFitsFirst = infoHeight <= 735-y;
+    var tableHeight = infoFitsFirst ? 735-y-infoHeight-12 : 735-y;
+    var tablePage = reportTakeTableColumns(rows,0,258,Math.max(0,tableHeight));
     if(tablePage.left.length) stripedTable(page,40,y,258,tablePage.left);
     if(tablePage.right.length) stripedTable(page,314,y,258,tablePage.right);
     if(tablePage.next) y += tablePage.height + 12;
-    reportDrawInfoBlock(page,40,y,258,room.cards[0].header,room.cards[0].bullets);
-    reportDrawInfoBlock(page,314,y,258,room.cards[1].header,room.cards[1].bullets);
+    if(infoFitsFirst){
+      reportDrawInfoBlock(page,40,y,258,room.cards[0].header,room.cards[0].bullets);
+      reportDrawInfoBlock(page,314,y,258,room.cards[1].header,room.cards[1].bullets);
+    }
     pages.push(page);
+
+    if(!infoFitsFirst){
+      page = pdfPage(portrait.width,portrait.height,"room");
+      pageBand(page,"Room report","Field record - continued");
+      pdfDrawText(page,roomName+" \u00b7 continued",40,76,24,true,PDF_COLORS.navy);
+      reportDrawInfoBlock(page,40,116,258,room.cards[0].header,room.cards[0].bullets);
+      reportDrawInfoBlock(page,314,116,258,room.cards[1].header,room.cards[1].bullets);
+      pages.push(page);
+    }
 
     while(tablePage.next < rows.length){
       page = pdfPage(portrait.width,portrait.height,"room");

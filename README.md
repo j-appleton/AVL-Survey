@@ -362,3 +362,6 @@ wrapped notes render at the same width used by the layout engine.
 
 Version 1.20 places the executive summary at the top of Visit overview and
 flows field-note cards beneath it instead of reserving an otherwise empty page.
+
+Version 1.20.1 lets room tables and equipment/control cards grow with wrapped
+answers and carries dense room records onto continuation pages without clipping.
