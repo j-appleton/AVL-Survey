@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 import worker,{ digestHex } from "../recovery-worker/src/index.js";
 
 var ORIGIN = "https://j-appleton.github.io";
+var execFileAsync = promisify(execFile);
 
 function toHex(bytes){
   return Array.prototype.map.call(new Uint8Array(bytes),function(byte){
@@ -37,10 +43,14 @@ class FakeObject {
 }
 
 class FakeR2 {
-  constructor(){ this.records = new Map(); this.sequence = 0; }
+  constructor(){ this.records = new Map(); this.sequence = 0; this.failConditionalPuts = 0; }
   async put(key,value,options){
     options = options || {};
     var existing = this.records.get(key);
+    if(options.onlyIf && this.failConditionalPuts > 0){
+      this.failConditionalPuts--;
+      return null;
+    }
     if(options.onlyIf && options.onlyIf.etagMatches && (!existing || existing.etag !== options.onlyIf.etagMatches)) return null;
     var bytes = await bodyBytes(value);
     var digest = await crypto.subtle.digest("SHA-256",bytes);
@@ -92,12 +102,21 @@ function request(path,init){
   if(!headers.has("Origin")) headers.set("Origin",ORIGIN);
   return new Request("https://preplot-recovery.example" + path,{...init,headers:headers});
 }
-async function issueCode(bucket,teamId,code){
+async function issueCode(bucket,teamId,code,maxUses){
   var hash = await digestHex(code);
-  await bucket.put("enrollments/" + hash + ".json",JSON.stringify({
+  var record = {
     teamId:teamId,issuedAt:new Date().toISOString(),
     expiresAt:new Date(Date.now()+86400000).toISOString(),usedAt:null
-  }),{httpMetadata:{contentType:"application/json"}});
+  };
+  if(maxUses){
+    record.maxUses = maxUses;
+    record.useCount = 0;
+    record.uses = [];
+    delete record.usedAt;
+  }
+  await bucket.put("enrollments/" + hash + ".json",JSON.stringify(record),{
+    httpMetadata:{contentType:"application/json"}
+  });
 }
 async function enroll(env,code){
   var response = await worker.fetch(request("/v1/enroll",{
@@ -119,7 +138,7 @@ async function upload(env,token,recoveryId,payload){
       "X-PrePlot-Site":encodeURIComponent("Main Campus"),
       "X-PrePlot-Visit-Date":"2026-08-05",
       "X-PrePlot-State-Updated":"2026-08-05T12%3A00%3A00.000Z",
-      "X-PrePlot-App-Version":"1.22.0",
+      "X-PrePlot-App-Version":"1.22.1",
       "X-PrePlot-Photo-Count":"60"
     },body:payload
   }),env,ctx);
@@ -141,6 +160,75 @@ test("one-use enrollment issues a revocable device token without exposing bucket
   var second = await enroll(env,code);
   assert.equal(second.response.status,400);
   assert.match(second.body.error,/already been used/i);
+});
+
+test("the enrollment issuer creates a private 25-install rollout record",async function(){
+  var directory = await mkdtemp(join(tmpdir(),"preplot-enrollment-"));
+  var output = join(directory,"record.json");
+  var summaryOutput = join(directory,"summary.json");
+  try {
+    var result = await execFileAsync(process.execPath,[
+      resolve("recovery-worker/scripts/create-enrollment.mjs"),
+      "--team","preplot-team","--max-uses","25","--output",output,
+      "--summary-output",summaryOutput
+    ],{cwd:resolve(".")});
+    var publicResult = JSON.parse(result.stdout);
+    var summary = JSON.parse(await readFile(summaryOutput,"utf8"));
+    var record = JSON.parse(await readFile(output,"utf8"));
+    assert.deepEqual(publicResult,{created:true,summaryOutput:summaryOutput,expiresAt:record.expiresAt,maxUses:25});
+    assert.equal(summary.maxUses,25);
+    assert.equal(summary.output,output);
+    assert.match(summary.code,/^PREPLOT-(?:[A-F0-9]{6}-){5}[A-F0-9]{6}$/);
+    assert.match(summary.objectKey,/^enrollments\/[a-f0-9]{64}\.json$/);
+    assert.equal(record.maxUses,25);
+    assert.equal(record.useCount,0);
+    assert.deepEqual(record.uses,[]);
+    assert.equal(record.teamId,"preplot-team");
+  } finally {
+    await rm(directory,{recursive:true,force:true});
+  }
+});
+
+test("one shared team code connects 25 unique installations and rejects the 26th",async function(){
+  var bucket = new FakeR2();
+  var env = {RECOVERY:bucket,ALLOWED_ORIGIN:ORIGIN};
+  var code = "PREPLOT-SHARED-AAAAAA-BBBBBB";
+  await issueCode(bucket,"preplot-team",code,25);
+  var tokens = new Set();
+  var devices = new Set();
+  for(var i=0;i<25;i++){
+    var result = await enroll(env,code);
+    assert.equal(result.response.status,201,"installation " + (i + 1) + " should connect");
+    tokens.add(result.body.token);
+    devices.add(result.body.deviceId);
+    assert.ok(bucket.records.has("devices/" + await digestHex(result.body.token) + ".json"));
+  }
+  assert.equal(tokens.size,25,"every installation must receive a unique credential");
+  assert.equal(devices.size,25,"every installation must receive a unique device identity");
+
+  var overLimit = await enroll(env,code);
+  assert.equal(overLimit.response.status,400);
+  assert.match(overLimit.body.error,/installation limit/i);
+  var enrollment = await bucket.get("enrollments/" + await digestHex(code) + ".json");
+  var record = JSON.parse(await enrollment.text());
+  assert.equal(record.maxUses,25);
+  assert.equal(record.useCount,25);
+  assert.equal(record.uses.length,25);
+});
+
+test("a conditional-write race retries without double-counting an installation",async function(){
+  var bucket = new FakeR2();
+  var env = {RECOVERY:bucket,ALLOWED_ORIGIN:ORIGIN};
+  var code = "PREPLOT-RACE01-AAAAAA-BBBBBB";
+  await issueCode(bucket,"preplot-team",code,25);
+  bucket.failConditionalPuts = 1;
+  var result = await enroll(env,code);
+  assert.equal(result.response.status,201);
+  var enrollment = await bucket.get("enrollments/" + await digestHex(code) + ".json");
+  var record = JSON.parse(await enrollment.text());
+  assert.equal(record.useCount,1);
+  assert.equal(record.uses.length,1);
+  assert.equal(record.uses[0].deviceId,result.body.deviceId);
 });
 
 test("authenticated recovery upload verifies checksum, lists metadata and restores exact bytes",async function(){

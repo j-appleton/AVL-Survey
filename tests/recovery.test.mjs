@@ -8,11 +8,11 @@ var TOKEN = "a".repeat(64);
 
 function state(client){
   return {
-    app:"avl-survey",schema:5,photoFormat:"inline",appVersion:"1.22.0",
+    app:"avl-survey",schema:5,photoFormat:"inline",appVersion:"1.22.1",
     data:{
       visit:{client:client || ""},log:{},rooms:[],photos:{},captions:{},
       compose:{summary:"",excluded:{}},skipped:{},ui:{},
-      meta:{created:"2026-08-05T12:00:00.000Z",updated:"2026-08-05T12:00:00.000Z",app:"1.22.0"}
+      meta:{created:"2026-08-05T12:00:00.000Z",updated:"2026-08-05T12:00:00.000Z",app:"1.22.1"}
     }
   };
 }
@@ -112,6 +112,17 @@ test("recovery is optional and makes no request while disconnected or offline",a
     assert.match(result.panel,/still works normally without a connection/i);
     assert.doesNotMatch(result.envelope,/token|device-12345678|preplot_recovery_config/i);
     assert.equal(after,before);
+  });
+});
+
+test("connection UI explains one shared code without adding an account or recurring login",async function(){
+  await withRecoveryApp(async function(page){
+    await page.locator("[data-recovery-connect-open]").click();
+    var text = await page.locator("[data-recovery-panel]").textContent();
+    assert.match(text,/Team connection code/i);
+    assert.match(text,/shared team code once on this installation/i);
+    assert.match(text,/No account or recurring login/i);
+    assert.doesNotMatch(text,/one-time recovery code/i);
   });
 });
 
