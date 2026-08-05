@@ -130,13 +130,21 @@ button.btn:active{transform:translateY(1px)}
 .photos>.addph{margin-right:calc(100% - 76px)}
 .photoitem{position:relative;width:76px;height:76px;flex:0 0 76px}
 .photoitem.captioned{width:100%;max-width:320px;flex:1 1 260px}
+.photoitem.organized{width:100%;max-width:320px;height:100px;flex:1 1 260px}
 .photoitem.captioned .phdel{left:52px;right:auto}
 .photoitem>.photo-caption{
-  position:absolute;left:84px;right:0;top:18px;display:block;width:calc(100% - 84px);
+  position:absolute;left:84px;right:0;top:4px;display:block;width:calc(100% - 84px);
   padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);
   color:var(--ink);font:inherit;font-size:13px
 }
 .photoitem>.photo-caption:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+.photoitem>.photo-move{
+  position:absolute;left:84px;right:0;top:54px;display:block;width:calc(100% - 84px);
+  min-height:34px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;
+  background:var(--card);color:var(--muted);font:inherit;font-size:12px
+}
+.photoitem.organized:not(.captioned)>.photo-move{top:20px}
+.photoitem>.photo-move:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
 .ph{
   display:block;position:relative;width:76px;height:76px;padding:0;border-radius:9px;overflow:hidden;
   border:1px solid var(--line);background:var(--card);cursor:zoom-in;color:inherit
@@ -164,6 +172,7 @@ button.btn:active{transform:translateY(1px)}
 .phdrag:focus{outline:2px solid var(--accent);outline-offset:2px}
 .photoitem.photo-dragging{opacity:.5}
 .photoitem.photo-drop-target{outline:2px solid var(--accent);outline-offset:3px;border-radius:9px}
+.photos.photo-drop-target{box-shadow:inset 0 0 0 2px var(--accent);border-radius:10px}
 @media (hover:hover) and (pointer:fine){.phdrag{display:block}}
 .addph{
   width:76px;height:76px;border:1.5px dashed var(--line);border-radius:9px;background:none;
@@ -186,11 +195,11 @@ button.btn:active{transform:translateY(1px)}
 .cover-card h2{margin:0;font-size:18px;color:var(--ink)}
 .cover-copy{margin:5px 0 12px;color:var(--muted);font-size:13px;line-height:1.4}
 .cover-preview{
-  display:block;width:100%;max-height:320px;min-height:180px;padding:0;margin:12px 0 8px;
+  display:flex;align-items:center;justify-content:center;width:100%;max-height:320px;min-height:180px;padding:0;margin:12px 0 8px;
   overflow:hidden;border:2px solid var(--accent);border-radius:12px;background:var(--card);
   position:relative;color:var(--muted);cursor:zoom-in
 }
-.cover-preview img{display:block;width:100%;height:100%;max-height:316px;object-fit:cover}
+.cover-preview img{display:block;width:auto;height:auto;max-width:100%;max-height:316px;object-fit:contain}
 .cover-preview .phload{font-size:12px}
 .cover-preview.ready .phload{display:none}
 .cover-file{font-size:12px;font-weight:650;color:var(--muted);overflow-wrap:anywhere}
@@ -388,7 +397,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.20.1";
+var APP_VERSION = "1.21.0";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -3077,6 +3086,40 @@ function fieldsHTML(scope, fields){
 }
 
 /* ---------- photo strip ---------- */
+function photoMoveDestinations(currentKey){
+  var destinations = [];
+  var seen = {};
+  function add(key,label){
+    key = String(key);
+    if(key === String(currentKey) || seen[key]) return;
+    seen[key] = true;
+    destinations.push({key:key,label:label});
+  }
+  add("log|main",((S.visit && S.visit.site) || "Site") + " - Site logistics & access");
+  S.rooms.forEach(function(room){
+    var roomName = (room.d && room.d.name) || ("Room " + room.id);
+    ROOM_SECTIONS.forEach(function(section){
+      add(String(room.id)+"|"+section.id,roomName+" - "+section.title);
+    });
+  });
+  Object.keys(photoBuckets()).forEach(function(key){ add(key,key); });
+  return destinations;
+}
+function photoMoveSelectHTML(key,index){
+  return '<select class="photo-move" data-photo-move data-photo-key="'+esc(key)+
+    '" data-photo-index="'+index+'" aria-label="Move photo '+(index+1)+' to another section">' +
+    '<option value="" selected>Move to another section...</option></select>';
+}
+function populatePhotoMoveSelect(select){
+  if(!select || select.getAttribute("data-photo-move-ready") === "1") return;
+  photoMoveDestinations(select.getAttribute("data-photo-key")).forEach(function(destination){
+    var option = document.createElement("option");
+    option.value = destination.key;
+    option.textContent = destination.label;
+    select.appendChild(option);
+  });
+  select.setAttribute("data-photo-move-ready","1");
+}
 function photosHTML(key){
   var list = photoList(key);
   return '<div class="f">' + photoCaptureRecoveryHTML(key) +
@@ -3093,8 +3136,8 @@ function photosHTML(key){
       var ready = source && source.url;
       var missing = isPhotoDescriptor(p) && !!missingPhotoIds[p.id];
       var canCaption = currentAppView === "photos" && isPhotoDescriptor(p);
-      var canReorder = currentAppView === "photos" && list.length > 1;
-      return '<div class="photoitem'+(canCaption ? ' captioned' : '')+(isCover ? ' cover-photo' : '')+(isCandidate ? ' cover-candidate' : '')+
+      var canReorder = currentAppView === "photos";
+      return '<div class="photoitem'+(canCaption ? ' captioned' : '')+(canReorder ? ' organized' : '')+(isCover ? ' cover-photo' : '')+(isCandidate ? ' cover-candidate' : '')+
         '" data-photo-key="'+esc(key)+'" data-photo-index="'+i+'"'+(canReorder ? ' data-photo-reorder' : '')+'>' +
         '<button type="button" class="ph'+(ready ? ' ready' : '')+(missing ? ' missing' : '')+'" data-viewph aria-label="'+viewLabel+'">' +
           ((isCover || isCandidate) ? '<span class="cover-badge">'+(isCandidate ? 'Selected' : 'Cover')+'</span>' : '') +
@@ -3104,13 +3147,14 @@ function photosHTML(key){
           ' data-photo-key="'+esc(key)+'" data-photo-index="'+i+'"></button>' +
         '<button type="button" class="phdel" data-delph="'+i+'" data-delete-label="'+label+'" aria-label="'+label+'">&times;</button>' +
         (canReorder
-          ? '<button type="button" class="phdrag" draggable="true" data-photo-drag-handle aria-label="Move photo '+(i+1)+' of '+list.length+'" title="Drag to reorder; arrow keys also move it">&#8597;</button>'
+          ? '<button type="button" class="phdrag" draggable="true" data-photo-drag-handle aria-label="Move photo '+(i+1)+' of '+list.length+'" title="Drag to another section or reorder here; arrow keys reorder within this section">&#8597;</button>'
           : '') +
         (canCaption
           ? '<input class="photo-caption" type="text" maxlength="'+window.PrePlotCaptions.MAX_LENGTH+
             '" data-photo-caption data-photo-id="'+esc(p.id)+'" value="'+esc(photoCaption(p))+
             '" aria-label="Caption for photo '+(i+1)+'" placeholder="Add caption (240 max)">'
           : '') +
+        (canReorder ? photoMoveSelectHTML(key,i) : '') +
         '</div>';
     }).join("") +
     '<button type="button" class="addph" data-addph="'+esc(key)+'"><span>+</span><span>Photo</span></button>' +
@@ -3733,6 +3777,20 @@ function clearPhotoDragState(){
     item.classList.remove("photo-dragging");
   });
 }
+function photoDropLocation(target){
+  var item = target.closest && target.closest("[data-photo-reorder]");
+  if(item){
+    return {
+      element:item,
+      key:item.getAttribute("data-photo-key"),
+      index:parseInt(item.getAttribute("data-photo-index"),10)
+    };
+  }
+  var strip = target.closest && target.closest("[data-photos]");
+  if(!strip) return null;
+  var key = strip.getAttribute("data-photos");
+  return {element:strip,key:key,index:photoList(key).length};
+}
 document.addEventListener("dragstart",function(e){
   var handle = e.target.closest && e.target.closest("[data-photo-drag-handle]");
   if(!handle) return;
@@ -3753,23 +3811,21 @@ document.addEventListener("dragstart",function(e){
 });
 document.addEventListener("dragover",function(e){
   if(!photoDragState) return;
-  var target = e.target.closest && e.target.closest("[data-photo-reorder]");
+  var target = photoDropLocation(e.target);
   clearPhotoDropTargets();
-  if(!target || target.getAttribute("data-photo-key") !== photoDragState.key) return;
+  if(!target || (target.key === photoDragState.key && target.index === photoDragState.index)) return;
   e.preventDefault();
   if(e.dataTransfer) e.dataTransfer.dropEffect = "move";
-  if(parseInt(target.getAttribute("data-photo-index"),10) !== photoDragState.index){
-    target.classList.add("photo-drop-target");
-  }
+  target.element.classList.add("photo-drop-target");
 });
 document.addEventListener("drop",function(e){
   if(!photoDragState) return;
-  var target = e.target.closest && e.target.closest("[data-photo-reorder]");
+  var target = photoDropLocation(e.target);
   var moving = photoDragState;
   clearPhotoDragState();
-  if(!target || target.getAttribute("data-photo-key") !== moving.key) return;
+  if(!target) return;
   e.preventDefault();
-  movePhotoWithinBucket(moving.key,moving.index,target.getAttribute("data-photo-index"));
+  movePhotoBetweenBuckets(moving.key,moving.index,target.key,target.index);
 });
 document.addEventListener("dragend",function(){ clearPhotoDragState(); });
 document.addEventListener("keydown",function(e){
@@ -3830,10 +3886,31 @@ document.addEventListener("input", function(e){
 });
 document.addEventListener("change", function(e){
   var t = e.target;
+  if(t.hasAttribute && t.hasAttribute("data-photo-move")){
+    var destination = t.value;
+    if(destination){
+      movePhotoBetweenBuckets(
+        t.getAttribute("data-photo-key"),
+        t.getAttribute("data-photo-index"),
+        destination,
+        photoList(destination).length
+      );
+    }
+    return;
+  }
   if(t.tagName === "SELECT" && t.getAttribute("data-scope")){
     setV(t.getAttribute("data-scope"), t.getAttribute("data-k"), t.value);
     refreshCalc(t.getAttribute("data-scope"));
     updateProgress();
+  }
+});
+document.addEventListener("pointerdown",function(e){
+  var select = e.target.closest && e.target.closest("[data-photo-move]");
+  if(select) populatePhotoMoveSelect(select);
+});
+document.addEventListener("focusin",function(e){
+  if(e.target.hasAttribute && e.target.hasAttribute("data-photo-move")){
+    populatePhotoMoveSelect(e.target);
   }
 });
 
@@ -4166,18 +4243,56 @@ function adjustPhotoCaptureRecoveriesAfterMove(key, fromIndex, toIndex){
   });
 }
 
+function adjustPhotoCaptureRecoveriesAcrossBuckets(fromKey,fromIndex,toKey,toIndex){
+  photoCaptureRecoveries.forEach(function(item){
+    if(item.key === String(fromKey)){
+      if(item.index === fromIndex){
+        item.key = String(toKey);
+        item.index = toIndex;
+        return;
+      }
+      if(item.index > fromIndex) item.index--;
+    }
+    if(item.key === String(toKey) && item.index >= toIndex) item.index++;
+  });
+}
+
 function movePhotoWithinBucket(key, fromIndex, toIndex){
   var list = photoList(key);
   fromIndex = parseInt(fromIndex,10);
   toIndex = parseInt(toIndex,10);
   if(isNaN(fromIndex) || isNaN(toIndex) || fromIndex < 0 || toIndex < 0 ||
-      fromIndex >= list.length || toIndex >= list.length || fromIndex === toIndex){
+      fromIndex >= list.length || toIndex > list.length || fromIndex === toIndex ||
+      (fromIndex === list.length-1 && toIndex === list.length)){
     return false;
   }
   resetAllPhotoDeletes();
+  var finalIndex = Math.min(toIndex,list.length-1);
   var moved = list.splice(fromIndex,1)[0];
-  list.splice(toIndex,0,moved);
-  adjustPhotoCaptureRecoveriesAfterMove(key,fromIndex,toIndex);
+  list.splice(finalIndex,0,moved);
+  adjustPhotoCaptureRecoveriesAfterMove(key,fromIndex,finalIndex);
+  save();
+  render();
+  return true;
+}
+
+function movePhotoBetweenBuckets(fromKey,fromIndex,toKey,toIndex){
+  fromKey = String(fromKey);
+  toKey = String(toKey);
+  if(fromKey === toKey) return movePhotoWithinBucket(fromKey,fromIndex,toIndex);
+  var source = photoList(fromKey);
+  fromIndex = parseInt(fromIndex,10);
+  toIndex = parseInt(toIndex,10);
+  if(!Array.isArray(photoBuckets()[toKey])) photoBuckets()[toKey] = [];
+  var destination = photoList(toKey);
+  if(isNaN(fromIndex) || isNaN(toIndex) || fromIndex < 0 ||
+      fromIndex >= source.length || toIndex < 0 || toIndex > destination.length){
+    return false;
+  }
+  resetAllPhotoDeletes();
+  var moved = source.splice(fromIndex,1)[0];
+  destination.splice(toIndex,0,moved);
+  adjustPhotoCaptureRecoveriesAcrossBuckets(fromKey,fromIndex,toKey,toIndex);
   save();
   render();
   return true;
@@ -5259,6 +5374,23 @@ function pdfImageCover(page,imageIndex,x,top,w,h,images){
     " cm /Im" + (imageIndex + 1) + " Do Q"
   );
 }
+function pdfImageContainNoUpscale(page,imageIndex,x,top,w,h,images){
+  var image = images[imageIndex];
+  if(!image) return null;
+  var scale = Math.min(1,w/image.width,h/image.height);
+  var drawW = image.width * scale;
+  var drawH = image.height * scale;
+  var drawX = x + (w-drawW)/2;
+  var drawTop = top + (h-drawH)/2;
+  var drawY = page.height-drawTop-drawH;
+  pdfRememberImage(page,imageIndex);
+  page.commands.push(
+    "q " + drawW.toFixed(2) + " 0 0 " + drawH.toFixed(2) + " " +
+    drawX.toFixed(2) + " " + drawY.toFixed(2) + " cm /Im" +
+    (imageIndex+1) + " Do Q"
+  );
+  return {x:drawX,top:drawTop,width:drawW,height:drawH,scale:scale};
+}
 
 /* Eight report primitives. All positions are measured from the page's top. */
 function pageBand(page,title,contextLabel){
@@ -5690,16 +5822,17 @@ function buildReportDocument(report,images){
   var pages = [];
   var layout = {
     coverImageIndex:report.cover.coverPhoto,
+    coverImageBox:null,
     tiles:[],
     roomTiles:[],
     photoCards:[]
   };
   var cover = pdfPage(portrait.width,portrait.height,"cover");
-  if(layout.coverImageIndex === null){
-    pdfFillRect(cover,0,0,cover.width,cover.height,PDF_COLORS.navy);
-  } else {
-    pdfImageCover(cover,layout.coverImageIndex,0,0,cover.width,452,images);
-    pdfFillRect(cover,0,452,cover.width,340,PDF_COLORS.navy);
+  pdfFillRect(cover,0,0,cover.width,cover.height,PDF_COLORS.navy);
+  if(layout.coverImageIndex !== null){
+    layout.coverImageBox = pdfImageContainNoUpscale(
+      cover,layout.coverImageIndex,0,0,cover.width,452,images
+    );
   }
   var coverTop = layout.coverImageIndex === null ? 300 : 482;
   pdfFillRect(cover,48,coverTop,60,3,PDF_COLORS.gold);
@@ -5885,8 +6018,8 @@ function buildHtmlReport(report,photoSources){
     "*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#fff;" +
     "color:var(--ink);font:16px/1.5 Helvetica,Arial,sans-serif}" +
     "a{color:var(--teal)}.shell{max-width:1180px;margin:0 auto;padding:0 24px 64px}" +
-    ".hero{background:var(--navy);color:#fff}.hero-photo{display:block;width:100%;height:min(52vh,520px);" +
-    "object-fit:cover}.hero-copy{max-width:1180px;margin:0 auto;padding:44px 24px 48px}" +
+    ".hero{background:var(--navy);color:#fff}.hero-photo{display:block;width:auto;max-width:100%;height:auto;" +
+    "max-height:min(52vh,520px);object-fit:contain;margin:0 auto}.hero-copy{max-width:1180px;margin:0 auto;padding:44px 24px 48px}" +
     ".rule{width:64px;height:4px;background:var(--gold);margin-bottom:20px}" +
     ".eyebrow{text-transform:uppercase;letter-spacing:.12em;color:#88c7c7;font-size:.75rem;font-weight:700}" +
     "h1{font-size:clamp(2.3rem,7vw,4.2rem);line-height:1.02;margin:6px 0 12px}" +
@@ -6454,6 +6587,7 @@ window.__avl = {
   switchAppView:switchAppView,
   groupedPhotoManifest:groupedPhotoManifest,
   movePhotoWithinBucket:movePhotoWithinBucket,
+  movePhotoBetweenBuckets:movePhotoBetweenBuckets,
   ROOM_SECTIONS:ROOM_SECTIONS,
   storagePersistStatus:function(){
     return {state:storagePersistState, requested:storagePersistRequested};

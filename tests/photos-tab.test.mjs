@@ -317,6 +317,50 @@ test("desktop photo dragging changes canonical order without changing photo iden
   },{desktop:true});
 });
 
+test("desktop Move to section relocates a singleton photo", async function(){
+  await withPhotosApp(async function(page){
+    var installed = await installDescriptorPhotos(page,3);
+    await page.evaluate(function(coverId){
+      var state = window.__avl.S();
+      var orphan = state.photos["1|audio"].pop();
+      state.photos["1|path"] = [orphan];
+      state.visit.coverPhotoId = coverId;
+    },installed.ids[2]);
+    await page.locator('[data-app-view="photos"]').click();
+
+    var singletonHandle = page.locator('[data-photos="1|path"] [data-photo-drag-handle]');
+    assert.equal(await singletonHandle.count(),1,"a singleton must still be movable");
+    var move = page.locator('[data-photos="1|path"] [data-photo-move]');
+    assert.equal(await move.count(),1,"every photo needs a direct cross-section control");
+    await move.focus();
+    await move.selectOption("1|audio");
+
+    var result = await page.evaluate(function(){
+      var audio = window.__avl.S().photos["1|audio"];
+      return {
+        source:(window.__avl.S().photos["1|path"] || []).map(function(photo){ return photo.id; }),
+        destination:audio.map(function(photo){ return photo.id; }),
+        captions:audio.map(function(photo){ return window.__avl.photoCaption(photo); }),
+        cover:window.__avl.S().visit.coverPhotoId,
+        manifest:window.__avl.photoManifest().map(function(entry){
+          return {
+            id:window.__avl.S().photos[entry.key][entry.bucketIndex].id,
+            key:entry.key,
+            index:entry.bucketIndex
+          };
+        })
+      };
+    });
+    assert.deepEqual(result.source,[]);
+    assert.deepEqual(result.destination,[installed.ids[0],installed.ids[1],installed.ids[2]]);
+    assert.deepEqual(result.captions,["Caption 1","Caption 2","Caption 3"]);
+    assert.equal(result.cover,installed.ids[2],"cover identity must follow the moved photo");
+    assert.ok(result.manifest.some(function(entry){
+      return entry.id === installed.ids[2] && entry.key === "1|audio" && entry.index === 2;
+    }),"the canonical manifest must use the destination section and index");
+  },{desktop:true});
+});
+
 test("mobile Add Photo occupies its own row below a captioned photo", async function(){
   await withPhotosApp(async function(page){
     await installDescriptorPhotos(page,1);

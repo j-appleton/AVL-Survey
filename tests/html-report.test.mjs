@@ -358,6 +358,37 @@ test("the exported HTML embeds the chosen cover photograph, not a sibling path",
       hero[1].split(",")[1],stored.toString("base64"),
       "the embedded cover must be the full stored original, byte for byte"
     );
+
+    var reportServer = await serve(join(extracted,root));
+    var browser = await launchBrowser();
+    try {
+      var context = await browser.newContext({
+        serviceWorkers:"block",
+        viewport:{width:1400,height:900}
+      });
+      var page = await context.newPage();
+      await page.goto(reportServer.origin + "/" + root + ".html",{waitUntil:"domcontentloaded"});
+      await page.locator(".hero-photo").waitFor({state:"visible"});
+      var geometry = await page.locator(".hero-photo").evaluate(function(image){
+        var rect = image.getBoundingClientRect();
+        return {
+          width:rect.width,
+          height:rect.height,
+          naturalWidth:image.naturalWidth,
+          naturalHeight:image.naturalHeight,
+          fit:getComputedStyle(image).objectFit
+        };
+      });
+      assert.ok(geometry.width <= geometry.naturalWidth,
+        "the HTML cover must not enlarge a photo beyond its stored width");
+      assert.ok(geometry.height <= geometry.naturalHeight,
+        "the HTML cover must not enlarge a photo beyond its stored height");
+      assert.equal(geometry.fit,"contain");
+      await context.close();
+    } finally {
+      await browser.close();
+      await reportServer.close();
+    }
   } finally {
     await rm(scratch,{recursive:true,force:true});
   }
