@@ -286,6 +286,63 @@ test("a short executive summary shares the Visit overview page with field notes"
   });
 });
 
+test("room tables and information cards retain wrapped text across pages", async function(){
+  await withPdfApp({
+    visit:{client:"Room flow fixture",site:"Long answers",date:"2026-08-05"},
+    log:{},rooms:[],photos:{},skipped:{},ui:{}
+  },async function(page){
+    var result = await page.evaluate(function(){
+      var rows = [];
+      for(var index=0;index<24;index++){
+        rows.push({
+          label:"Pathways and rack field with a deliberately long label " + index,
+          value:"This answer records the route, access constraints, coordination needs, " +
+            "and conditions that must remain visible to engineering and operations. " +
+            (index === 23 ? "TABLETAILMARKER" : "Row " + index)
+        });
+      }
+      var equipment = "FSR MAS-8100, Tascam DV-D01U, Shure SCM268, Onkyo DX-C390, " +
+        "Crown CDi2000, existing cabling, and rack accessories must all remain visible. " +
+        "The complete inventory also includes power distribution, network switching, " +
+        "wireless microphone receivers, playback equipment, spare cabling, and hardware " +
+        "that engineering must account for in the quote and installation plan. " +
+        "EQUIPMENTTAILMARKER";
+      var documentModel = window.__avl.buildReportDocument({
+        summary:"",
+        cover:{
+          client:"Room flow fixture",site:"Long answers",date:"2026-08-05",
+          surveyor:"Jonathan",photoCount:0,coverPhoto:null
+        },
+        overview:[],
+        rooms:[{
+          id:"1",title:"Conference Hall",stats:[],rows:rows,
+          cards:[
+            {header:"Existing equipment",bullets:[{label:"Inventory",value:equipment}]},
+            {header:"Control",bullets:[
+              {label:"Interface",value:"Touch panel"},
+              {label:"Lighting control",value:"Not required"},
+              {label:"Operator",value:"Public / unattended"}
+            ]}
+          ]
+        }],
+        photos:[]
+      },[]);
+      var roomPages = documentModel.pages.filter(function(candidate){
+        return candidate.kind === "room";
+      });
+      return {
+        count:roomPages.length,
+        commands:roomPages.map(function(candidate){
+          return candidate.commands.join("\n");
+        }).join("\n")
+      };
+    });
+    assert.ok(result.count > 1,"long room data must continue onto another page");
+    assert.match(result.commands,/TABLETAILMARKER/,"table values must not stop after two lines");
+    assert.match(result.commands,/EQUIPMENTTAILMARKER/,"equipment values must not be ellipsized");
+  });
+});
+
 test("cover identity survives portable import, reordering and deliberate deletion", async function(){
   await withPdfApp(reportState(),async function(page){
     await page.locator('[data-app-view="photos"]').click();
