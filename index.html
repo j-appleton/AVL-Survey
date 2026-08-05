@@ -397,7 +397,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.21.0";
+var APP_VERSION = "1.21.1";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -4601,11 +4601,6 @@ function compress(file, cb){
    IMPORT / EXPORT
    ============================================================ */
 function slug(){
-  var c = (S.visit.client || "site").replace(/[^a-z0-9]+/gi,"-").toLowerCase().replace(/^-|-$/g,"");
-  var d = S.visit.date || "";
-  return "avl-survey-" + c + (d ? "-" + d : "");
-}
-function pdfSlug(){
   var words = (S.visit.client || "site")
     .replace(/[^a-z0-9]+/gi," ")
     .replace(/^\s+|\s+$/g,"")
@@ -4616,6 +4611,9 @@ function pdfSlug(){
     });
   var d = S.visit.date || "";
   return "PrePlot-" + (words.join("-") || "Site") + (d ? "-" + d : "");
+}
+function pdfSlug(){
+  return slug();
 }
 function portablePhotoValid(value){
   if(!value || typeof value !== "object" || Array.isArray(value)) return false;

@@ -125,7 +125,7 @@ test("Save photo shares the actual byte-exact File synchronously and never claim
       shared.canMicrotasks,
       "no microtask checkpoint may pass between canShare and navigator.share"
     );
-    assert.equal(shared.name, "avl-survey-exact-byte-client-2026-07-25-1-notes-photo-1.jpg");
+    assert.equal(shared.name, "PrePlot-Exact-Byte-Client-2026-07-25-1-notes-photo-1.jpg");
     assert.equal(shared.type, "image/jpeg");
     assert.equal(shared.size, EXACT_BYTES.length);
     assert.deepEqual(shared.bytes, EXACT_BYTES);
@@ -298,7 +298,7 @@ test("unsupported file sharing reveals a byte-exact download fallback without st
         viewerText:document.querySelector(".phviewer").textContent
       };
     });
-    assert.equal(downloaded.click.name, "avl-survey-exact-byte-client-2026-07-25-1-notes-photo-1.jpg");
+    assert.equal(downloaded.click.name, "PrePlot-Exact-Byte-Client-2026-07-25-1-notes-photo-1.jpg");
     assert.equal(downloaded.click.href, "blob:photo-fallback");
     assert.equal(downloaded.type, "image/jpeg");
     assert.equal(downloaded.size, EXACT_BYTES.length);

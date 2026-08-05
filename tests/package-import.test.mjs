@@ -172,6 +172,33 @@ test("the complete ZIP restores exact photos with fresh IDs and a filename-mappe
   });
 });
 
+test("packages with legacy avl-survey root names remain importable", async function(){
+  await withApp(async function(page){
+    var built = await buildPackage(page);
+    var legacyBytes = await page.evaluate(async function(input){
+      var archive = window.__avl.zipReadStore(new Uint8Array(input));
+      var legacyRoot = "avl-survey-package-recovery-2026-07-30";
+      var entries = archive.names.map(function(name){
+        return {
+          name:legacyRoot + name.slice(archive.root.length),
+          bytes:archive.entries[name].bytes
+        };
+      });
+      return Array.from(new Uint8Array(await window.__avl.zipStore(entries).arrayBuffer()));
+    },built.bytes);
+    var restored = await page.evaluate(async function(input){
+      await window.AVLPhotoStore.clear();
+      var ok = await window.__avl.applyPackageImport(new Uint8Array(input));
+      return {
+        ok:ok,
+        client:window.__avl.S().visit.client,
+        photos:window.__avl.photoManifest().length
+      };
+    },legacyBytes);
+    assert.deepEqual(restored,{ok:true,client:"Package recovery",photos:2});
+  });
+});
+
 test("a v1.14 package without coverPhoto imports with no selected cover", async function(){
   await withApp(async function(page){
     var built = await buildPackage(page);
