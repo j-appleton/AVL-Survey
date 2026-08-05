@@ -356,3 +356,6 @@ target.
 
 Version 1.19 adds desktop photo reordering within each capture section and keeps
 the Add Photo control on its own row below thumbnails and captions.
+
+Version 1.19.1 resets PDF character spacing after letterspaced headings so
+wrapped notes render at the same width used by the layout engine.

@@ -388,7 +388,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.19.0";
+var APP_VERSION = "1.19.1";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -5194,13 +5194,14 @@ function pdfRoundedRect(page,x,top,w,h,r,color){
 function pdfDrawText(page,value,x,top,size,bold,color,align,spacing){
   var text = String(value === undefined || value === null ? "" : value);
   var actualX = x;
-  var width = pdfTextWidth(text,size,!!bold,spacing || 0);
+  var characterSpacing = spacing || 0;
+  var width = pdfTextWidth(text,size,!!bold,characterSpacing);
   if(align === "right") actualX -= width;
   else if(align === "center") actualX -= width / 2;
   page.commands.push(
     "BT /" + (bold ? "F2" : "F1") + " " + size.toFixed(2) + " Tf " +
     pdfHexColor(color || PDF_COLORS.ink) + " rg " +
-    (spacing ? spacing.toFixed(2) + " Tc " : "") +
+    characterSpacing.toFixed(2) + " Tc " +
     "1 0 0 1 " + actualX.toFixed(2) + " " +
     (page.height - top - size).toFixed(2) + " Tm " + pdfTextToken(text) + " Tj ET"
   );
