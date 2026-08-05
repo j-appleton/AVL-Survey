@@ -23,14 +23,15 @@ live in the private `preplot-recovery` R2 bucket; the Worker is the only public 
 Generate the code and its private record locally, then upload only the record:
 
 ```sh
-node scripts/create-enrollment.mjs --team preplot-team --max-uses 25 \
+node scripts/create-enrollment.mjs --team preplot-team --max-uses 25 --expires-days 365 \
   --output /tmp/preplot-enrollment.json \
   --summary-output /tmp/preplot-enrollment-summary.json
 npx wrangler@latest r2 object put preplot-recovery/enrollments/<HASH>.json --remote --file /tmp/preplot-enrollment.json --content-type application/json
 ```
 
-The private summary file contains the shared code, installation limit and exact R2 object
-key. Send the code privately. It expires after seven days and cannot be redeemed beyond its limit. Each
+The private summary file contains the shared code, installation limit, expiry and exact R2
+object key. Send the code privately. Codes default to a 365-day rollout window, which can be
+changed with `--expires-days`, and cannot be redeemed beyond their installation limit. Each
 successful redemption creates a distinct device token, so installations remain individually
 revocable. Omit `--max-uses` for a one-installation code.
 

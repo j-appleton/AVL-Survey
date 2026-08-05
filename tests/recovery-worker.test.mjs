@@ -169,13 +169,14 @@ test("the enrollment issuer creates a private 25-install rollout record",async f
   try {
     var result = await execFileAsync(process.execPath,[
       resolve("recovery-worker/scripts/create-enrollment.mjs"),
-      "--team","preplot-team","--max-uses","25","--output",output,
+      "--team","preplot-team","--max-uses","25","--expires-days","365","--output",output,
       "--summary-output",summaryOutput
     ],{cwd:resolve(".")});
     var publicResult = JSON.parse(result.stdout);
     var summary = JSON.parse(await readFile(summaryOutput,"utf8"));
     var record = JSON.parse(await readFile(output,"utf8"));
-    assert.deepEqual(publicResult,{created:true,summaryOutput:summaryOutput,expiresAt:record.expiresAt,maxUses:25});
+    assert.deepEqual(publicResult,{created:true,summaryOutput:summaryOutput,expiresAt:record.expiresAt,expiresDays:365,maxUses:25});
+    assert.equal(summary.expiresDays,365);
     assert.equal(summary.maxUses,25);
     assert.equal(summary.output,output);
     assert.match(summary.code,/^PREPLOT-(?:[A-F0-9]{6}-){5}[A-F0-9]{6}$/);
@@ -184,6 +185,11 @@ test("the enrollment issuer creates a private 25-install rollout record",async f
     assert.equal(record.useCount,0);
     assert.deepEqual(record.uses,[]);
     assert.equal(record.teamId,"preplot-team");
+    assert.equal(
+      Date.parse(record.expiresAt) - Date.parse(record.issuedAt),
+      365 * 24 * 60 * 60 * 1000,
+      "the requested one-year rollout window must be written exactly"
+    );
   } finally {
     await rm(directory,{recursive:true,force:true});
   }
