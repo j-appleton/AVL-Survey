@@ -64,6 +64,8 @@ it works with no signal — the service worker caches everything on first load.
 - The **core** counter in the header tracks the small subset worth chasing before
   you leave site. Everything else is optional.
 - **+ Room** adds a space; **Duplicate** clones one for near-identical rooms.
+- **Budget / approved range** is internal commercial context. It stays in the
+  saved package and CRM note, but never appears in the PDF or engineering report.
 - **Restore from package** accepts a complete PrePlot ZIP package or an older
   JSON backup, validates it before touching the current survey, and upgrades
   older data when needed.
