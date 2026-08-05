@@ -387,9 +387,10 @@ function create(options){
       h += '<div class="hint">Optional cloud safety net. PrePlot still works normally without a connection.</div></div>' +
         '<button type="button" class="btn sm" data-recovery-connect-open>Connect recovery</button></div>';
       if(connectOpen){
-        h += '<div class="recovery-connect"><label class="flab" for="recoveryCode">One-time recovery code</label>' +
+        h += '<div class="recovery-connect"><label class="flab" for="recoveryCode">Team connection code</label>' +
           '<input id="recoveryCode" data-recovery-code autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" ' +
           'placeholder="Paste code">' +
+          '<div class="hint">Use the shared team code once on this installation. No account or recurring login.</div>' +
           '<div class="roomtools"><button type="button" class="btn sm pri" data-recovery-connect>Connect this installation</button>' +
           '<button type="button" class="btn sm ghost" data-recovery-connect-cancel>Cancel</button></div></div>';
       }

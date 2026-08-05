@@ -1,9 +1,11 @@
 # PrePlot
 
 PrePlot is a pre-install AV site survey app. It runs entirely in the browser, works offline,
-and stores the working survey on your device. An optional one-time recovery connection can
-also keep a verified private copy in Cloudflare R2; local capture never waits for it, and the
-Drive package remains the permanent job record.
+and stores the working survey on your device. An optional recovery connection can also keep
+a verified private copy in Cloudflare R2; local capture never waits for it, and the Drive
+package remains the permanent job record. One shared team code can connect up to 25 installed
+copies during its seven-day rollout window. Each installation receives its own revocable
+device credential, with no account or recurring login.
 
 ## Why it needs hosting
 

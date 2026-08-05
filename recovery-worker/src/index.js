@@ -99,49 +99,80 @@ function authenticate(request, env){
     return device;
   }).catch(function(){ return null; });
 }
+function enrollmentLimit(record){
+  var value = Math.floor(Number(record && record.maxUses));
+  return isFinite(value) && value > 0 && value <= 100 ? value : 1;
+}
+function enrollmentUseCount(record){
+  var value = Math.floor(Number(record && record.useCount));
+  if(isFinite(value) && value >= 0) return value;
+  return record && record.usedAt ? 1 : 0;
+}
+function reserveEnrollment(env, key, input, attempt){
+  return env.RECOVERY.get(key).then(function(object){
+    if(!object) throw new Error("Recovery code is invalid or has expired");
+    return objectJSON(object).then(function(record){
+      if(!safeId(record.teamId)) throw new Error("Recovery code is invalid");
+      if(!record.expiresAt || Date.parse(record.expiresAt) <= Date.now()) throw new Error("Recovery code is invalid or has expired");
+      var maxUses = enrollmentLimit(record);
+      var useCount = enrollmentUseCount(record);
+      if(useCount >= maxUses){
+        throw new Error(maxUses > 1 ? "Recovery code has reached its installation limit" : "Recovery code has already been used");
+      }
+      var deviceId = crypto.randomUUID();
+      var connectedAt = new Date().toISOString();
+      var token = randomHex(32);
+      var deviceName = String(input.deviceName || "PrePlot installation").slice(0,120);
+      var uses = Array.isArray(record.uses) ? record.uses.slice(0,Math.max(0,maxUses - 1)) : [];
+      uses.push({deviceId:deviceId,deviceName:deviceName,connectedAt:connectedAt});
+      var reserved = {
+        teamId:record.teamId,
+        enrollmentId:record.enrollmentId || "",
+        issuedAt:record.issuedAt || "",
+        expiresAt:record.expiresAt,
+        maxUses:maxUses,
+        useCount:useCount + 1,
+        uses:uses
+      };
+      if(maxUses === 1) reserved.usedAt = connectedAt;
+      return env.RECOVERY.put(key,JSON.stringify(reserved),{
+        onlyIf:{etagMatches:object.etag},
+        httpMetadata:{contentType:"application/json"}
+      }).then(function(marked){
+        if(!marked){
+          if(attempt >= 4) throw new Error("Recovery code is busy. Try again.");
+          return reserveEnrollment(env,key,input,attempt + 1);
+        }
+        return {
+          teamId:record.teamId,deviceId:deviceId,deviceName:deviceName,
+          connectedAt:connectedAt,token:token
+        };
+      });
+    });
+  });
+}
 function enroll(request, env){
   return readSmallJSON(request).then(function(input){
     var code = String(input.code || "").trim();
     if(code.length < 12 || code.length > 160) throw new Error("Recovery code is invalid");
     return digestHex(code).then(function(codeHash){
       var key = "enrollments/" + codeHash + ".json";
-      return env.RECOVERY.get(key).then(function(object){
-        if(!object) throw new Error("Recovery code is invalid or has expired");
-        return objectJSON(object).then(function(record){
-          if(record.usedAt) throw new Error("Recovery code has already been used");
-          if(!safeId(record.teamId)) throw new Error("Recovery code is invalid");
-          if(!record.expiresAt || Date.parse(record.expiresAt) <= Date.now()) throw new Error("Recovery code is invalid or has expired");
-          var deviceId = crypto.randomUUID();
-          var connectedAt = new Date().toISOString();
-          var token = randomHex(32);
-          var used = {
-            teamId:record.teamId,
-            issuedAt:record.issuedAt || "",
-            expiresAt:record.expiresAt,
-            usedAt:connectedAt,
-            deviceId:deviceId
+      return reserveEnrollment(env,key,input,0).then(function(reserved){
+        return digestHex(reserved.token).then(function(tokenHash){
+          var device = {
+            teamId:reserved.teamId,
+            deviceId:reserved.deviceId,
+            deviceName:reserved.deviceName,
+            connectedAt:reserved.connectedAt
           };
-          return env.RECOVERY.put(key,JSON.stringify(used),{
-            onlyIf:{etagMatches:object.etag},
-            httpMetadata:{contentType:"application/json"}
-          }).then(function(marked){
-            if(!marked) throw new Error("Recovery code has already been used");
-            return digestHex(token).then(function(tokenHash){
-              var device = {
-                teamId:record.teamId,
-                deviceId:deviceId,
-                deviceName:String(input.deviceName || "PrePlot installation").slice(0,120),
-                connectedAt:connectedAt
-              };
-              return env.RECOVERY.put("devices/" + tokenHash + ".json",JSON.stringify(device),{
-                httpMetadata:{contentType:"application/json"},
-                customMetadata:{teamId:record.teamId,deviceId:deviceId}
-              }).then(function(){
-                return json({
-                  token:token,deviceId:deviceId,teamId:record.teamId,connectedAt:connectedAt
-                },201);
-              });
-            });
+          return env.RECOVERY.put("devices/" + tokenHash + ".json",JSON.stringify(device),{
+            httpMetadata:{contentType:"application/json"},
+            customMetadata:{teamId:reserved.teamId,deviceId:reserved.deviceId}
+          }).then(function(){
+            return json({
+              token:reserved.token,deviceId:reserved.deviceId,
+              teamId:reserved.teamId,connectedAt:reserved.connectedAt
+            },201);
           });
         });
       });
