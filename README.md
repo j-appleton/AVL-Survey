@@ -365,3 +365,7 @@ flows field-note cards beneath it instead of reserving an otherwise empty page.
 
 Version 1.20.1 lets room tables and equipment/control cards grow with wrapped
 answers and carries dense room records onto continuation pages without clipping.
+
+Version 1.21 adds a direct Move to another section control for every photo,
+keeps drag reordering, and contains cover photographs without enlarging them in
+the app preview, PDF, or HTML report.

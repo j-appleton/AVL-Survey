@@ -286,6 +286,29 @@ test("a short executive summary shares the Visit overview page with field notes"
   });
 });
 
+test("the PDF cover contains its photo without enlarging it", async function(){
+  await withPdfApp({
+    visit:{client:"Cover scale fixture",site:"Portrait",date:"2026-08-05"},
+    log:{},rooms:[],photos:{},skipped:{},ui:{}
+  },async function(page){
+    var result = await page.evaluate(function(){
+      return window.__avl.buildReportDocument({
+        summary:"",
+        cover:{
+          client:"Cover scale fixture",site:"Portrait",date:"2026-08-05",
+          surveyor:"Jonathan",photoCount:1,coverPhoto:0
+        },
+        overview:[],rooms:[],photos:[]
+      },[{width:120,height:240,bytes:new Uint8Array([1])}]).layout.coverImageBox;
+    });
+    assert.equal(result.scale,1,"a small cover photo must never be enlarged");
+    assert.equal(result.width,120);
+    assert.equal(result.height,240);
+    assert.equal(result.x,246,"the original-size photo should be centered horizontally");
+    assert.equal(result.top,106,"the original-size photo should be centered vertically");
+  });
+});
+
 test("room tables and information cards retain wrapped text across pages", async function(){
   await withPdfApp({
     visit:{client:"Room flow fixture",site:"Long answers",date:"2026-08-05"},
