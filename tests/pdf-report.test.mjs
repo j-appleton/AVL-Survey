@@ -251,6 +251,41 @@ test("wrapped overview text resets header letterspacing before it is drawn", asy
   });
 });
 
+test("a short executive summary shares the Visit overview page with field notes", async function(){
+  await withPdfApp({
+    visit:{client:"Combined fixture",site:"Overview",date:"2026-08-05"},
+    log:{},rooms:[],photos:{},skipped:{},ui:{}
+  },async function(page){
+    var result = await page.evaluate(function(){
+      var summary = "Replace the presentation system while preserving the room's familiar operating flow.";
+      var note = "Coordinate the installation around the client's public schedule.";
+      var documentModel = window.__avl.buildReportDocument({
+        summary:summary,
+        cover:{
+          client:"Combined fixture",site:"Overview",date:"2026-08-05",
+          surveyor:"Jonathan",photoCount:0,coverPhoto:null
+        },
+        overview:[{title:"Site logistics",body:note}],
+        rooms:[],photos:[]
+      },[]);
+      var overviewPages = documentModel.pages.filter(function(candidate){
+        return candidate.kind === "overview";
+      });
+      var commands = overviewPages.length ? overviewPages[0].commands.join("\n") : "";
+      return {
+        kinds:documentModel.pages.map(function(candidate){ return candidate.kind; }),
+        overviewPages:overviewPages.length,
+        hasSummary:commands.indexOf(window.__avl.pdfTextToken(summary)) > -1,
+        hasNote:commands.indexOf(window.__avl.pdfTextToken(note)) > -1
+      };
+    });
+    assert.equal(result.kinds.indexOf("summary"),-1,"summary-only pages should not be produced");
+    assert.equal(result.overviewPages,1);
+    assert.equal(result.hasSummary,true,"the summary must render on Visit overview");
+    assert.equal(result.hasNote,true,"the first field note must share that page");
+  });
+});
+
 test("cover identity survives portable import, reordering and deliberate deletion", async function(){
   await withPdfApp(reportState(),async function(page){
     await page.locator('[data-app-view="photos"]').click();

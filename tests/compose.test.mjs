@@ -176,9 +176,11 @@ test("executive summary is bounded, escaped and keeps the CRM note CRLF-only", a
     assert.equal(result.crm.indexOf("\r\n") > -1,true);
     assert.equal(result.crm.replace(/\r\n/g,"").indexOf("\n"),-1);
     assert.match(result.crm,/EXECUTIVE SUMMARY\r\nDecision \(A\) \\ path\r\n  <script>/);
-    assert.ok(result.pdf.pages.some(function(pageInfo){ return pageInfo.kind === "summary"; }));
+    assert.equal(result.pdf.pages.some(function(pageInfo){ return pageInfo.kind === "summary"; }),false);
+    assert.ok(result.pdf.pages.some(function(pageInfo){ return pageInfo.kind === "overview"; }));
     assert.equal(result.capped.length,1500);
-    assert.ok(result.cappedPdf.pages.filter(function(pageInfo){ return pageInfo.kind === "summary"; }).length >= 1);
+    assert.equal(result.cappedPdf.pages.filter(function(pageInfo){ return pageInfo.kind === "summary"; }).length,0);
+    assert.ok(result.cappedPdf.pages.filter(function(pageInfo){ return pageInfo.kind === "overview"; }).length >= 1);
   });
 });
 

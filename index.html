@@ -388,7 +388,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.19.1";
+var APP_VERSION = "1.20.0";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -5290,9 +5290,21 @@ function statTile(page,x,y,w,label,value,qualifier){
   pdfDrawText(page,String(value || "\u2014"),x+10,y+26,22,true,PDF_COLORS.navy);
   if(qualifier) pdfDrawText(page,qualifier,x+10,y+57,7.5,false,PDF_COLORS.muted);
 }
+function executiveSummaryCard(page,x,y,w,lines,continued){
+  var h = 45 + lines.length * 12;
+  card(page,x,y,w,h);
+  cardHeader(page,x,y,w,continued ? "Executive summary - continued" : "Executive summary");
+  lines.forEach(function(line,index){
+    pdfDrawText(page,line,x+12,y+34+index*12,9.5,false,PDF_COLORS.ink);
+  });
+  return h;
+}
+function numberedCardHeight(w,body){
+  return Math.max(66,34 + pdfWrapLines(body,9.5,false,w-64,0).length * 12);
+}
 function numberedCard(page,x,y,w,n,title,body){
   var bodyLines = pdfWrapLines(body,9.5,false,w-64,0);
-  var h = Math.max(66,34 + bodyLines.length * 12);
+  var h = numberedCardHeight(w,body);
   card(page,x,y,w,h);
   var cx = x + 24;
   var cy = page.height - y - 25;
@@ -5637,14 +5649,15 @@ function reportDrawInfoBlock(page,x,y,w,title,rows){
   });
   return h;
 }
-function reportSummaryLines(value){
+function reportSummaryLines(value,maxWidth){
+  maxWidth = maxWidth || 532;
   var lines = [];
-  pdfWrapLines(value,9.5,false,532,0).forEach(function(line){
-    if(pdfTextWidth(line,9.5,false,0) <= 532){ lines.push(line); return; }
+  pdfWrapLines(value,9.5,false,maxWidth,0).forEach(function(line){
+    if(pdfTextWidth(line,9.5,false,0) <= maxWidth){ lines.push(line); return; }
     var remaining = line;
     while(remaining){
       var take = 1;
-      while(take < remaining.length && pdfTextWidth(remaining.slice(0,take+1),9.5,false,0) <= 532){
+      while(take < remaining.length && pdfTextWidth(remaining.slice(0,take+1),9.5,false,0) <= maxWidth){
         take++;
       }
       lines.push(remaining.slice(0,take));
@@ -5683,28 +5696,41 @@ function buildReportDocument(report,images){
   pdfDrawText(cover,"Prepared from " + report.cover.photoCount + " photograph" + (report.cover.photoCount === 1 ? "" : "s"),48,metaTop+70,9.5,false,PDF_WHITE);
   pages.push(cover);
 
+  var overviewPage = null;
+  var overviewY = 78;
+  function startOverviewPage(contextLabel){
+    overviewPage = pdfPage(portrait.width,portrait.height,"overview");
+    pageBand(overviewPage,"Visit overview",contextLabel);
+    pages.push(overviewPage);
+    overviewY = 78;
+  }
   if(report.summary){
-    var summaryLines = reportSummaryLines(report.summary);
+    var summaryLines = reportSummaryLines(report.summary,508);
+    var summaryContinued = false;
     while(summaryLines.length){
-      var summaryPage = pdfPage(portrait.width,portrait.height,"summary");
-      pageBand(summaryPage,"Executive summary",pages.length === 1 ? "Visit brief" : "Continued");
-      var pageLines = summaryLines.splice(0,54);
-      pageLines.forEach(function(line,index){
-        pdfDrawText(summaryPage,line,40,82+index*12,9.5,false,PDF_COLORS.ink);
-      });
-      pages.push(summaryPage);
+      if(!overviewPage){
+        startOverviewPage(summaryContinued ? "Summary continued" : "Summary and field notes");
+      }
+      var summaryCapacity = Math.floor((735 - overviewY - 45) / 12);
+      if(summaryCapacity < 1){
+        overviewPage = null;
+        summaryContinued = true;
+        continue;
+      }
+      var summaryPageLines = summaryLines.splice(0,summaryCapacity);
+      overviewY += executiveSummaryCard(
+        overviewPage,40,overviewY,532,summaryPageLines,summaryContinued
+      ) + 10;
+      if(summaryLines.length){
+        overviewPage = null;
+        summaryContinued = true;
+      }
     }
   }
-
-  var overviewPage = null;
-  var overviewY = 82;
   report.overview.forEach(function(item,index){
-    var expected = Math.max(66,34 + pdfWrapLines(item.body,9.5,false,484,0).length * 12);
+    var expected = numberedCardHeight(532,item.body);
     if(!overviewPage || overviewY + expected > 735){
-      overviewPage = pdfPage(portrait.width,portrait.height,"overview");
-      pageBand(overviewPage,"Visit overview","Decisions and field notes");
-      pages.push(overviewPage);
-      overviewY = 78;
+      startOverviewPage(report.summary ? "Summary and field notes" : "Decisions and field notes");
     }
     overviewY += numberedCard(overviewPage,40,overviewY,532,index+1,item.title,item.body) + 10;
   });

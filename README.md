@@ -359,3 +359,6 @@ the Add Photo control on its own row below thumbnails and captions.
 
 Version 1.19.1 resets PDF character spacing after letterspaced headings so
 wrapped notes render at the same width used by the layout engine.
+
+Version 1.20 places the executive summary at the top of Visit overview and
+flows field-note cards beneath it instead of reserving an otherwise empty page.
