@@ -417,7 +417,7 @@ test("a descriptor-backed package extracts exact bytes without duplicating them 
     assert.equal(await surveyStateSnapshot(page),before);
     var scratch = await mkdtemp(join(tmpdir(),"avl-descriptor-package-"));
     try {
-      var root = "avl-survey-descriptor-client-2026-07-27";
+      var root = "PrePlot-Descriptor-Client-2026-07-27";
       var archivePath = join(scratch,"package.zip");
       var extracted = join(scratch,"out");
       await writeFile(archivePath,Buffer.from(result.archive));

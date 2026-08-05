@@ -104,6 +104,8 @@ it works with no signal — the service worker caches everything on first load.
   site-visit PDF, and a searchable interactive HTML report with every included
   full-resolution photo embedded directly in the file. The separate `photos`
   folder still carries every original, including photos excluded from reports.
+  New packages and their extracted top-level folders use the `PrePlot` name;
+  packages created before the rename remain importable.
   The complete ZIP can be imported back into PrePlot as the survey backup.
   **Share package…** opens the device share
   sheet for Google Drive; **Download package instead** is always available.

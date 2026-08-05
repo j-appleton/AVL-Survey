@@ -187,12 +187,12 @@ test("prepared ZIP extracts independently with canonical names, byte-exact photo
     var before = await surveyStateSnapshot(page);
     var status = await prepare(page);
     assert.equal(status.total, 4);
-    assert.equal(status.filename, "avl-survey-exact-package-client-2026-07-26-package.zip");
+    assert.equal(status.filename, "PrePlot-Exact-Package-Client-2026-07-26-package.zip");
     assert.equal(await surveyStateSnapshot(page), before, "preparation must not mutate survey state");
 
     var manifest = await page.evaluate(function(){ return window.__avl.photoManifest(); });
     var bytes = await packageBytes(page);
-    var root = "avl-survey-exact-package-client-2026-07-26";
+    var root = "PrePlot-Exact-Package-Client-2026-07-26";
     var scratch = await mkdtemp(join(tmpdir(),"avl-photo-package-"));
     try {
       var archivePath = join(scratch,"package.zip");
@@ -350,7 +350,7 @@ test("captured selection order reaches independently extracted ZIP photo order",
     },sources);
     await prepare(page);
     var manifest = await page.evaluate(function(){ return window.__avl.photoManifest(); });
-    var root = "avl-survey-capture-order-2026-07-28";
+    var root = "PrePlot-Capture-Order-2026-07-28";
     var bytes = await packageBytes(page);
     var scratch = await mkdtemp(join(tmpdir(),"avl-capture-order-"));
     try {
