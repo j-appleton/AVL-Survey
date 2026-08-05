@@ -285,6 +285,15 @@ button.btn:active{transform:translateY(1px)}
 .pkgtools .btn{flex:1;min-width:180px}
 .pkgsummary{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
 .pkgstatus{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.45}
+.recovery-panel{border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin:0 0 12px;background:var(--bg)}
+.recovery-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.recovery-head>div:first-child{flex:1;min-width:0}.recovery-head .flab{margin:0 0 2px}
+.recovery-actions,.recovery-connect .roomtools{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;padding:0;border:0;background:none}
+.recovery-connect{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.recovery-connect input{margin-bottom:8px;text-transform:uppercase;letter-spacing:.03em}
+.recovery-list{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.recovery-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.recovery-item:last-of-type{margin-bottom:9px}.recovery-item>div{min-width:0}.recovery-item b{font-size:13px}
 
 /* footer bar */
 .foot{
@@ -375,6 +384,7 @@ button.btn:active{transform:translateY(1px)}
 <script src="./photo-store.js"></script>
 <script src="./photo-captions.js"></script>
 <script src="./compose.js"></script>
+<script src="./recovery.js"></script>
 <script>
 "use strict";
 
@@ -385,7 +395,8 @@ button.btn:active{transform:translateY(1px)}
 var mem = {};
 var store = {
   get: function(k){ try { return localStorage.getItem(k); } catch(e){ return mem[k] || null; } },
-  set: function(k,v){ try { localStorage.setItem(k,v); return true; } catch(e){ mem[k]=v; return false; } }
+  set: function(k,v){ try { localStorage.setItem(k,v); return true; } catch(e){ mem[k]=v; return false; } },
+  remove: function(k){ try { localStorage.removeItem(k); } catch(e){ delete mem[k]; } }
 };
 var KEY         = "avl_survey_v1";  // live survey
 var BACKUP_KEY  = "avl_backup_v1";  // pre-destructive-op snapshot
@@ -397,7 +408,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.21.2";
+var APP_VERSION = "1.22.0";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -902,6 +913,7 @@ var saveTimer = null;
 var photoCaptureRecoveries = [];
 var photoCaptureCritical = false;
 var photoCaptureSaveSuppressed = false;
+var recoveryController = null;
 function persistSurvey(){
   if(S.meta) S.meta.updated = nowISO();
   var ok = store.set(KEY, JSON.stringify(stateEnvelope()));
@@ -912,6 +924,7 @@ function persistSurvey(){
     });
   }
   updateStorageBar();
+  if(ok && recoveryController) recoveryController.markDirty();
   return ok;
 }
 function save(){
@@ -1058,6 +1071,10 @@ function storageHTML(){
 function updateStorageBar(){
   var el = document.getElementById("storagewrap");
   if(el) el.innerHTML = storageHTML();
+}
+function updateRecoveryPanel(){
+  var el = document.getElementById("recoverywrap");
+  if(el && recoveryController) el.innerHTML = recoveryController.html();
 }
 function refreshStorageEstimate(){
   if(!navigator.storage || !navigator.storage.estimate) return;
@@ -3416,6 +3433,7 @@ function surveyViewHTML(){
   h += '<div class="card"><div style="padding:14px">';
   h += '<div class="flab" style="margin-bottom:8px">Data &amp; storage</div>';
   h += '<div id="storagewrap" style="margin-bottom:12px">' + storageHTML() + '</div>';
+  h += '<div id="recoverywrap">' + (recoveryController ? recoveryController.html() : '') + '</div>';
   h += '<div id="photopackagewrap">' + photoPackageHTML() + '</div>';
   h += '<div class="roomtools" style="border:0;background:none;padding:0;flex-wrap:wrap">' +
     '<button class="btn sm ghost" id="imp">Restore from package</button>' +
@@ -4135,6 +4153,46 @@ document.addEventListener("click", function(e){
   if(t.id === "pkgprepare"){ preparePhotoPackage(); return; }
   if(t.id === "pkgshare"){ sharePreparedPackage(); return; }
   if(t.id === "pkgdownload"){ downloadPreparedPackage(); return; }
+  if(t.hasAttribute && t.hasAttribute("data-recovery-connect-open")){
+    recoveryController.openConnect();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-recovery-connect-cancel")){
+    recoveryController.closeConnect();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-recovery-connect")){
+    var recoveryCode = document.querySelector("[data-recovery-code]");
+    recoveryController.connect(recoveryCode ? recoveryCode.value : "","PrePlot installation").then(function(connected){
+      if(connected){
+        persistSurvey();
+        recoveryController.flush();
+      }
+    });
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-recovery-sync")){
+    recoveryController.markDirty(0);
+    recoveryController.flush();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-recovery-list")){
+    recoveryController.loadRecoveries();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-recovery-list-close")){
+    recoveryController.closeRecoveries();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-recovery-restore")){
+    armConfirm(t,"Tap again to restore",function(){
+      recoveryController.restore(
+        t.getAttribute("data-recovery-id"),
+        t.getAttribute("data-recovery-version")
+      );
+    });
+    return;
+  }
   if(t.id === "imp"){ document.getElementById("jsonin").click(); return; }
   if(t.id === "restore"){
     armConfirm(t, "Tap again to restore", function(){ restoreBackup(); });
@@ -6332,8 +6390,28 @@ function generatePdfReport(manifest,onProgress){
    BOOT
    ============================================================ */
 load();
+recoveryController = window.PrePlotRecovery.create({
+  storage:store,
+  buildPayload:portableEnvelope,
+  hasWork:hasSurveyWork,
+  getSurvey:function(){
+    return {
+      created:S.meta && S.meta.created || "",
+      client:S.visit.client || "",
+      site:S.visit.site || "",
+      date:S.visit.date || "",
+      updated:S.meta && S.meta.updated || "",
+      appVersion:APP_VERSION,
+      photoCount:photoCount()
+    };
+  },
+  applyPortable:applyImport,
+  isCaptureBusy:function(){ return photoCaptureCritical || photoCapturePendingCount > 0; },
+  onChange:updateRecoveryPanel
+});
 if(S.ui["visit|main"] === undefined) S.ui["visit|main"] = true;
 render();
+recoveryController.start();
 refreshStorageEstimate();
 refreshPhotoIntegrity();
 resolveStoragePersistence();
@@ -6345,7 +6423,12 @@ document.addEventListener("visibilitychange", function(){
   if(document.visibilityState === "visible" && storagePersistState === "denied"){
     recheckStoragePersistence();
   }
+  if(document.visibilityState === "visible" && recoveryController){
+    recoveryController.resume();
+  }
 });
+window.addEventListener("online",function(){ if(recoveryController) recoveryController.resume(); });
+window.addEventListener("focus",function(){ if(recoveryController) recoveryController.resume(); });
 
 /* ---- offline service worker ---- */
 var swApplyingUpdate = false;
@@ -6591,6 +6674,7 @@ window.__avl = {
   storagePersistStatus:function(){
     return {state:storagePersistState, requested:storagePersistRequested};
   },
+  recovery:function(){ return recoveryController; },
   resolveStoragePersistence:resolveStoragePersistence,
   recheckStoragePersistence:recheckStoragePersistence,
   openPhotoViewer:openPhotoViewer,
