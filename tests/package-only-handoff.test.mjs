@@ -66,6 +66,8 @@ function crmState(){
       contact:"",
       itc:"",
       scope:"Replace the room system.\nCoordinate around classes.",
+      integrators:"Multiple integrators",
+      competition:"Northstar AV and the client's incumbent IT provider",
       budget:"$35,000 - $50,000"
     },
     log:{
@@ -261,30 +263,46 @@ test("CRM note walks canonical fields, preserves blanks and ships once at the ar
   });
 });
 
-test("budget stays internal to the app, package data and CRM note", async function(){
+test("commercial context stays internal to the app, package data and CRM note", async function(){
   await withApp(crmState(),async function(page){
     var result = await page.evaluate(async function(){
-      var input = document.querySelector('[data-scope="visit"][data-k="budget"]');
+      var budget = document.querySelector('[data-scope="visit"][data-k="budget"]');
+      var involvement = document.querySelector('[data-scope="visit"][data-k="integrators"]');
+      var competition = document.querySelector('[data-scope="visit"][data-k="competition"]');
       var model = window.__avl.buildReportModel();
       var html = window.__avl.buildHtmlReport(model);
       var pdf = await window.__avl.generatePdfReport();
       return {
-        field:input ? input.closest(".f").innerText : "",
-        value:input ? input.value : "",
+        budgetField:budget ? budget.closest(".f").innerText : "",
+        budgetValue:budget ? budget.value : "",
+        involvementField:involvement ? involvement.closest(".f").innerText : "",
+        involvementValue:involvement ? involvement.value : "",
+        competitionField:competition ? competition.closest(".f").innerText : "",
+        competitionValue:competition ? competition.value : "",
         crm:window.__avl.crmNoteText(),
-        packaged:window.__avl.packageEnvelope([]).data.visit.budget,
+        packaged:window.__avl.packageEnvelope([]).data.visit,
         model:JSON.stringify(model),
         html:html,
         pdf:new TextDecoder("latin1").decode(pdf.bytes)
       };
     });
-    assert.match(result.field,/Budget \/ approved range/);
-    assert.match(result.field,/Internal only/);
-    assert.equal(result.value,"$35,000 - $50,000");
+    assert.match(result.budgetField,/Budget \/ approved range/);
+    assert.match(result.budgetField,/Internal only/);
+    assert.equal(result.budgetValue,"$35,000 - $50,000");
+    assert.match(result.involvementField,/Integrator involvement/);
+    assert.match(result.involvementField,/Internal only/);
+    assert.equal(result.involvementValue,"Multiple integrators");
+    assert.match(result.competitionField,/Other integrators \/ competition/);
+    assert.match(result.competitionField,/Internal only/);
+    assert.equal(result.competitionValue,"Northstar AV and the client's incumbent IT provider");
+    assert.match(result.crm,/Integrator involvement: Multiple integrators/);
+    assert.match(result.crm,/Other integrators \/ competition: Northstar AV and the client's incumbent IT provider/);
     assert.match(result.crm,/Budget \/ approved range: \$35,000 - \$50,000/);
-    assert.equal(result.packaged,"$35,000 - $50,000");
+    assert.equal(result.packaged.integrators,"Multiple integrators");
+    assert.equal(result.packaged.competition,"Northstar AV and the client's incumbent IT provider");
+    assert.equal(result.packaged.budget,"$35,000 - $50,000");
     [result.model,result.html,result.pdf].forEach(function(output){
-      assert.doesNotMatch(output,/35,000|50,000|Budget \/ approved range/);
+      assert.doesNotMatch(output,/35,000|50,000|Budget \/ approved range|Multiple integrators|Northstar AV|Other integrators \/ competition/);
     });
   });
 });

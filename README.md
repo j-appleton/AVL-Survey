@@ -70,6 +70,9 @@ it works with no signal — the service worker caches everything on first load.
 - **+ Room** adds a space; **Duplicate** clones one for near-identical rooms.
 - **Budget / approved range** is internal commercial context. It stays in the
   saved package and CRM note, but never appears in the PDF or engineering report.
+- **Integrator involvement** and **Other integrators / competition** capture
+  whether the opportunity is sole-source or competitive, plus who else is
+  involved. They follow the same internal-only handoff as budget.
 - **Restore from package** accepts a complete PrePlot ZIP package or an older
   JSON backup, validates it before touching the current survey, and upgrades
   older data when needed.

@@ -408,7 +408,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.22.1";
+var APP_VERSION = "1.22.2";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -424,6 +424,11 @@ var VISIT = [
   {k:"contact", l:"Site contact (name / role / mobile)", t:"text", c:1},
   {k:"itc",     l:"IT contact", t:"text", h:"Separate person 90% of the time. Get them now."},
   {k:"scope",   l:"Scope as understood on arrival", t:"area", h:"Note anything that doesn't match the sales scope."},
+  {k:"integrators", l:"Integrator involvement", t:"sel",
+    o:["","Only us","Multiple integrators","Unknown"],
+    h:"Are we the only integrator, or is the work competitive / split? Internal only."},
+  {k:"competition", l:"Other integrators / competition", t:"text",
+    h:"Who else is quoting or carrying part of the work? Internal only - included in the CRM note and saved package, never the PDF or engineering report."},
   {k:"budget",  l:"Budget / approved range", t:"text", h:"Internal only - included in the CRM note and saved package, never the PDF or engineering report."}
 ];
 
