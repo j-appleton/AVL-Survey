@@ -160,6 +160,7 @@ test("Photos exposes every room section as a direct capture checklist", async fu
           }
         ),
         directAdds:room.querySelectorAll("[data-photos] [data-addph]").length,
+        directExisting:room.querySelectorAll("[data-photos] [data-addexisting]").length,
         selectors:document.querySelectorAll("[data-photo-add-select],[data-add-room-photos]").length,
         roomToggle:document.querySelectorAll("[data-photo-room-toggle]").length,
         site:!!document.querySelector('[data-photo-group="log|main"] [data-addph]')
@@ -167,6 +168,7 @@ test("Photos exposes every room section as a direct capture checklist", async fu
     });
     assert.deepEqual(result.actual,result.expected);
     assert.equal(result.directAdds,result.expected.length);
+    assert.equal(result.directExisting,result.expected.length);
     assert.equal(result.selectors,0);
     assert.equal(result.roomToggle,0);
     assert.equal(result.site,true);
@@ -261,6 +263,65 @@ test("capture started from the Photos view writes to the chosen empty section", 
       await page.evaluate(function(){ return window.__avl.appView(); }),
       "photos"
     );
+  });
+});
+
+test("Existing adds multiple library files to the chosen section without changing camera capture", async function(){
+  await withPhotosApp(async function(page){
+    await page.locator('[data-app-view="photos"]').click();
+    var inputs = await page.evaluate(function(){
+      var camera = document.getElementById("filein");
+      var library = document.getElementById("libraryin");
+      return {
+        cameraAccept:camera.getAttribute("accept"),
+        cameraCapture:camera.getAttribute("capture"),
+        cameraMultiple:camera.multiple,
+        libraryAccept:library.getAttribute("accept"),
+        libraryCapture:library.hasAttribute("capture"),
+        libraryMultiple:library.multiple
+      };
+    });
+    assert.deepEqual(inputs,{
+      cameraAccept:"image/*",
+      cameraCapture:"environment",
+      cameraMultiple:true,
+      libraryAccept:"image/*",
+      libraryCapture:false,
+      libraryMultiple:true
+    });
+
+    await page.locator('[data-photos="1|dims"] [data-addexisting]').click();
+    await page.locator("#libraryin").setInputFiles([
+      {
+        name:"wide.svg",
+        mimeType:"image/svg+xml",
+        buffer:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="red"/></svg>')
+      },
+      {
+        name:"tall.svg",
+        mimeType:"image/svg+xml",
+        buffer:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="40"><rect width="20" height="40" fill="blue"/></svg>')
+      }
+    ]);
+    await until(async function(){
+      return page.evaluate(function(){
+        return window.__avl.photoCaptureIdle().then(function(){
+          return (window.__avl.S().photos["1|dims"] || []).length === 2;
+        });
+      });
+    });
+    var result = await page.evaluate(function(){
+      return {
+        dimensions:window.__avl.S().photos["1|dims"].map(function(photo){
+          return [photo.width,photo.height];
+        }),
+        items:document.querySelectorAll('[data-photos="1|dims"] .photoitem').length,
+        active:window.__avl.appView()
+      };
+    });
+    assert.deepEqual(result.dimensions,[[40,20],[20,40]],"library selection order must be preserved");
+    assert.equal(result.items,2);
+    assert.equal(result.active,"photos");
   });
 });
 
@@ -361,7 +422,7 @@ test("desktop Move to section relocates a singleton photo", async function(){
   },{desktop:true});
 });
 
-test("mobile Add Photo occupies its own row below a captioned photo", async function(){
+test("mobile photo actions occupy their own row below a captioned photo", async function(){
   await withPhotosApp(async function(page){
     await installDescriptorPhotos(page,1);
     await page.locator('[data-app-view="photos"]').click();
@@ -371,16 +432,20 @@ test("mobile Add Photo occupies its own row below a captioned photo", async func
       var item = strip.querySelector(".photoitem").getBoundingClientRect();
       var caption = strip.querySelector("[data-photo-caption]").getBoundingClientRect();
       var add = strip.querySelector("[data-addph]").getBoundingClientRect();
+      var existing = strip.querySelector("[data-addexisting]").getBoundingClientRect();
       return {
         item:{left:item.left,top:item.top,right:item.right,bottom:item.bottom},
         caption:{left:caption.left,top:caption.top,right:caption.right,bottom:caption.bottom},
-        add:{left:add.left,top:add.top,right:add.right,bottom:add.bottom}
+        add:{left:add.left,top:add.top,right:add.right,bottom:add.bottom},
+        existing:{left:existing.left,top:existing.top,right:existing.right,bottom:existing.bottom}
       };
     });
     assert.ok(
       geometry.add.top >= geometry.item.bottom + 7,
       "Add Photo must start on a new row beneath the photo and caption"
     );
+    assert.equal(geometry.existing.top,geometry.add.top,"both photo actions must share the new row");
+    assert.ok(geometry.existing.left >= geometry.add.right + 7,"Existing must sit beside Photo without overlap");
     assert.ok(
       geometry.caption.right <= geometry.item.right + 1,
       "the caption must remain inside its photo row: " + JSON.stringify(geometry)
@@ -389,6 +454,11 @@ test("mobile Add Photo occupies its own row below a captioned photo", async func
       geometry.caption.bottom > geometry.add.top && geometry.caption.top < geometry.add.bottom,
       false,
       "the caption must not obscure Add Photo"
+    );
+    assert.equal(
+      geometry.caption.bottom > geometry.existing.top && geometry.caption.top < geometry.existing.bottom,
+      false,
+      "the caption must not obscure Existing"
     );
   });
 });

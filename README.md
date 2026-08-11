@@ -83,7 +83,10 @@ it works with no signal — the service worker caches everything on first load.
 - Photos, capture controls, and recovery notices live in the dedicated
   **Photos** tab. Every room section stays visible there as a direct capture
   checklist, including empty sections; there is no destination picker to hide
-  the required shot list. Tap any thumbnail to inspect the full stored survey
+  the required shot list. **Photo** opens the camera while **Existing** adds one
+  or more images from the phone's photo library or a computer's files; both use
+  the same compression, storage, ordering, and package pipeline. Tap any
+  thumbnail to inspect the full stored survey
   image without the thumbnail crop, then move through the other photos in that
   section. On a laptop, drag the handle on a photo to reorder it within that
   section; the package, PDF, and HTML report follow the same order.
