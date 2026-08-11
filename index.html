@@ -93,6 +93,12 @@ input[type=text],input[type=number],input[type=date],input[type=time],select,tex
 }
 textarea{min-height:66px;resize:vertical}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+.checkline{
+  display:flex;align-items:center;gap:10px;min-height:44px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:10px;background:var(--bg);
+  color:var(--ink);font-size:14px;font-weight:600;cursor:pointer
+}
+.checkline input{width:20px;height:20px;margin:0;accent-color:var(--accent);flex:0 0 auto}
 .row{display:flex;gap:8px;flex-wrap:wrap}
 .row>.f{flex:1;min-width:96px;margin:0}
 .row+.row{margin-top:12px}
@@ -408,12 +414,12 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.22.2";
+var APP_VERSION = "1.22.3";
 var SCHEMA = 5;
 
 /* ============================================================
    SCHEMA
-   t: text|num|date|time|area|sel|tri|chips
+   t: text|num|date|time|area|sel|tri|chips|check
    c: 1 = core field (the stuff we must not leave site without)
    ============================================================ */
 var VISIT = [
@@ -551,6 +557,8 @@ var ROOM_SECTIONS = [
     {k:"remov", l:"Removal & disposal by", t:"text"},
     {k:"ctrl",  l:"Control interface preference", t:"chips", o:["Touch panel","Button panel","Auto-sensing","App / BYOD","Existing system"]},
     {k:"lightctl", l:"Lighting control integration", t:"sel", o:["","Not required","DALI","DMX","0-10V","Lutron","Crestron","Other / unknown"]},
+    {k:"archlight", l:"Architectural lighting replacement", t:"check", checkLabel:"Include replacement in this room"},
+    {k:"lightcount", l:"Architectural light count", t:"num", h:"Count the fixtures included in the replacement scope."},
     {k:"oper",  l:"Who operates the room", t:"sel", o:["","Trained AV staff","General staff","Public / unattended"]}
   ]},
 
@@ -3089,6 +3097,10 @@ function fieldHTML(scope, f){
       return '<button type="button" data-chip data-v="'+esc(o)+'" aria-pressed="'+(arr.indexOf(o) > -1)+'">'+esc(o)+'</button>';
     }).join("") + '</div>';
   }
+  else if(f.t === "check"){
+    body = '<label class="checkline"><input id="'+id+'" type="checkbox" '+da+
+      (v === true ? ' checked' : '')+'><span>'+esc(f.checkLabel || "Included")+'</span></label>';
+  }
 
   return '<div class="f'+(f.inline ? " inl" : "")+'">'+lab+body+hint+'</div>';
 }
@@ -3898,6 +3910,7 @@ document.addEventListener("input", function(e){
   var scope = t.getAttribute && t.getAttribute("data-scope");
   var k = t.getAttribute && t.getAttribute("data-k");
   if(!scope || !k) return;
+  if(t.type === "checkbox") return;
   setV(scope, k, t.value);
   if(k === "name"){
     var card = t.closest("[data-room]");
@@ -3920,6 +3933,11 @@ document.addEventListener("change", function(e){
         photoList(destination).length
       );
     }
+    return;
+  }
+  if(t.type === "checkbox" && t.getAttribute("data-scope")){
+    setV(t.getAttribute("data-scope"),t.getAttribute("data-k"),!!t.checked);
+    updateProgress();
     return;
   }
   if(t.tagName === "SELECT" && t.getAttribute("data-scope")){
@@ -5716,6 +5734,8 @@ function reportEquipmentColumns(room){
     control:collect([
       {key:"ctrl",label:"Interface"},
       {key:"lightctl",label:"Lighting control"},
+      {key:"archlight",label:"Architectural lighting replacement"},
+      {key:"lightcount",label:"Architectural light count"},
       {key:"oper",label:"Operator"}
     ])
   };
@@ -6291,6 +6311,8 @@ function buildHtmlReport(report,photoSources){
 
 function disp(v){
   if(Array.isArray(v)) return v.join(", ");
+  if(v === true) return "Yes";
+  if(v === false) return "No";
   if(v === "ok") return "OK";
   if(v === "issue") return "ISSUE";
   if(v === "na") return "N/A";

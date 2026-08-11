@@ -307,6 +307,42 @@ test("commercial context stays internal to the app, package data and CRM note", 
   });
 });
 
+test("architectural lighting replacement and count reach the package, CRM note and report model", async function(){
+  await withApp(crmState(),async function(page){
+    await page.locator('[data-toggle="1|exist"]').click();
+    var checkbox = page.locator('[data-scope="1"][data-k="archlight"]');
+    var count = page.locator('[data-scope="1"][data-k="lightcount"]');
+    await checkbox.check();
+    await count.fill("18");
+    var result = await page.evaluate(function(){
+      var state = window.__avl.S();
+      var model = window.__avl.buildReportModel();
+      var control = model.rooms[0].cards.filter(function(card){
+        return card.header === "Control";
+      })[0];
+      return {
+        checked:document.querySelector('[data-scope="1"][data-k="archlight"]').checked,
+        state:{archlight:state.rooms[0].d.archlight,lightcount:state.rooms[0].d.lightcount},
+        packaged:window.__avl.packageEnvelope([]).data.rooms[0].d,
+        crm:window.__avl.crmNoteText(),
+        control:control
+      };
+    });
+    assert.equal(result.checked,true);
+    assert.deepEqual(result.state,{archlight:true,lightcount:"18"});
+    assert.equal(result.packaged.archlight,true);
+    assert.equal(result.packaged.lightcount,"18");
+    assert.match(result.crm,/Architectural lighting replacement: Yes/);
+    assert.match(result.crm,/Architectural light count: 18/);
+    assert.deepEqual(result.control.bullets.filter(function(item){
+      return /^Architectural/.test(item.label);
+    }),[
+      {label:"Architectural lighting replacement",value:"Yes"},
+      {label:"Architectural light count",value:"18"}
+    ]);
+  });
+});
+
 test("editing any reported field makes an already prepared package stale", async function(){
   await withApp(crmState(),async function(page){
     await page.evaluate(function(){ window.__avl.preparePhotoPackage(); });
