@@ -133,7 +133,7 @@ button.btn:active{transform:translateY(1px)}
 
 /* photos */
 .photos{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-.photos>.addph{margin-right:calc(100% - 76px)}
+.photo-add-actions{display:flex;gap:8px;flex:0 0 100%}
 .photoitem{position:relative;width:76px;height:76px;flex:0 0 76px}
 .photoitem.captioned{width:100%;max-width:320px;flex:1 1 260px}
 .photoitem.organized{width:100%;max-width:320px;height:100px;flex:1 1 260px}
@@ -385,6 +385,7 @@ button.btn:active{transform:translateY(1px)}
 <div class="toast" id="toast"></div>
 <div class="sysnotices" id="systemNotices" aria-live="polite"></div>
 <input type="file" id="filein" accept="image/*" capture="environment" multiple hidden>
+<input type="file" id="libraryin" accept="image/*" multiple hidden>
 <input type="file" id="jsonin" accept="application/zip,.zip,application/json,.json" hidden>
 
 <script src="./photo-store.js"></script>
@@ -414,7 +415,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.22.3";
+var APP_VERSION = "1.22.4";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -3192,7 +3193,10 @@ function photosHTML(key){
         (canReorder ? photoMoveSelectHTML(key,i) : '') +
         '</div>';
     }).join("") +
-    '<button type="button" class="addph" data-addph="'+esc(key)+'"><span>+</span><span>Photo</span></button>' +
+    '<div class="photo-add-actions">' +
+      '<button type="button" class="addph" data-addph="'+esc(key)+'" aria-label="Take photo"><span>+</span><span>Photo</span></button>' +
+      '<button type="button" class="addph" data-addexisting="'+esc(key)+'" aria-label="Add existing photos"><span>&#8679;</span><span>Existing</span></button>' +
+    '</div>' +
     '</div></div>';
 }
 
@@ -4106,6 +4110,7 @@ document.addEventListener("click", function(e){
   }
 
   if(t.hasAttribute && t.hasAttribute("data-addph")){ pickPhoto(t.getAttribute("data-addph")); return; }
+  if(t.hasAttribute && t.hasAttribute("data-addexisting")){ pickExistingPhotos(t.getAttribute("data-addexisting")); return; }
 
   if(t.hasAttribute && t.hasAttribute("data-delph")){
     var strip = t.closest("[data-photos]");
@@ -4407,11 +4412,19 @@ function photoStoreStatus(){
   };
 }
 
-function pickPhoto(key){
+function pickPhotoFiles(key,inputId){
   photoTarget = key;
-  var inp = document.getElementById("filein");
+  var inp = document.getElementById(inputId);
   inp.value = "";
   inp.click();
+}
+
+function pickPhoto(key){
+  pickPhotoFiles(key,"filein");
+}
+
+function pickExistingPhotos(key){
+  pickPhotoFiles(key,"libraryin");
 }
 
 function photoCaptureSummary(batch){
@@ -4651,11 +4664,14 @@ function photoCaptureIdle(){
   return photoCaptureFlight.then(function(){});
 }
 
-document.getElementById("filein").addEventListener("change", function(e){
+function handlePhotoFiles(e){
   var files = Array.prototype.slice.call(e.target.files || []);
   if(!files.length || !photoTarget) return;
   queuePhotoBatch(photoTarget,files);
-});
+}
+
+document.getElementById("filein").addEventListener("change",handlePhotoFiles);
+document.getElementById("libraryin").addEventListener("change",handlePhotoFiles);
 
 function compress(file, cb){
   var reader = new FileReader();

@@ -600,7 +600,8 @@ test("photo controls are siblings and two taps delete only the armed image", asy
       });
       return {
         itemCount:items.length,
-        lastIsAdd:strip.lastElementChild.classList.contains("addph"),
+        lastIsActions:strip.lastElementChild.classList.contains("photo-add-actions"),
+        addButtons:strip.lastElementChild.querySelectorAll(".addph").length,
         nestedButtons:strip.querySelectorAll(".ph button, button button").length,
         items:items.map(function(item){
           return {
@@ -619,7 +620,8 @@ test("photo controls are siblings and two taps delete only the armed image", asy
       };
     });
     assert.equal(structure.itemCount, 3);
-    assert.equal(structure.lastIsAdd, true, "Add Photo must remain last in the strip");
+    assert.equal(structure.lastIsActions, true, "photo actions must remain last in the strip");
+    assert.equal(structure.addButtons, 2, "camera and existing-photo actions must stay together");
     assert.equal(structure.nestedButtons, 0, "photo controls must never be nested buttons");
     structure.items.forEach(function(item){
       assert.equal(item.overflow, "visible", "the positioned wrapper must remain clip-free");
@@ -703,7 +705,8 @@ test("photo controls are siblings and two taps delete only the armed image", asy
         labels:Array.prototype.map.call(strip.querySelectorAll("[data-delph]"), function(btn){
           return btn.getAttribute("aria-label");
         }),
-        lastIsAdd:strip.lastElementChild.classList.contains("addph"),
+        lastIsActions:strip.lastElementChild.classList.contains("photo-add-actions"),
+        addButtons:strip.lastElementChild.querySelectorAll(".addph").length,
         confirms:window.__confirmCalls
       };
     });
@@ -722,7 +725,8 @@ test("photo controls are siblings and two taps delete only the armed image", asy
     );
     assert.equal(result.armed, 0, "the deletion render must clear every armed state");
     assert.deepEqual(result.labels, ["Delete photo 1 of 2", "Delete photo 2 of 2"]);
-    assert.equal(result.lastIsAdd, true, "Add Photo must remain last after re-render");
+    assert.equal(result.lastIsActions, true, "photo actions must remain last after re-render");
+    assert.equal(result.addButtons, 2, "both photo actions must survive re-render");
     assert.equal(result.confirms, 0, "photo deletion must not invoke a native dialog");
   });
 });
