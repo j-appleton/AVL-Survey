@@ -62,6 +62,20 @@ header{
 .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .25s}
 .corechip{font-size:11px;padding:4px 8px;border-radius:99px;background:var(--na-bg);color:var(--muted);white-space:nowrap}
 .corechip.done{background:var(--ok-bg);color:var(--ok)}
+.room-context-rail{
+  position:fixed;left:max(3px,env(safe-area-inset-left));top:50%;z-index:45;
+  width:30px;height:min(44vh,280px);transform:translateY(-50%);
+  display:flex;align-items:center;justify-content:center;pointer-events:none
+}
+.room-context-pill{
+  width:max-content;max-width:min(44vh,280px);min-height:30px;padding:6px 14px;border:1px solid var(--accent);
+  border-radius:999px;background:var(--card);color:var(--accent);
+  box-shadow:0 4px 16px rgba(0,0,0,.18);transform:rotate(-90deg);
+  font-size:11px;font-weight:750;letter-spacing:.035em;line-height:1.35;
+  text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+@media(max-width:900px){.wrap{padding-left:38px}}
+@media(min-width:901px) and (max-width:1220px){.wrap.composewrap{padding-left:38px}}
 
 /* ---------- cards / sections ---------- */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin:12px 0;overflow:hidden;scroll-margin-top:88px}
@@ -342,6 +356,7 @@ button.btn:active{transform:translateY(1px)}
 .compose-preview-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .composephotos{padding:14px}.composephotos-head{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:12px}
 .composephotos-head h2{margin:0}.compose-photo-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.compose-room-marker{display:block;grid-column:1/-1;height:0;scroll-margin-top:110px}
 .compose-photo{border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--panel);min-width:0}
 .compose-photo.excluded{opacity:.62;background:var(--bg)}.compose-photo .ph{width:100%;height:150px;border-radius:8px}
 .compose-photo-meta{display:flex;gap:8px;align-items:baseline;justify-content:space-between;margin:8px 1px 6px}
@@ -415,7 +430,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.22.4";
+var APP_VERSION = "1.22.5";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -3425,7 +3440,7 @@ function surveyViewHTML(){
   var h = "";
 
   /* visit + logistics */
-  h += '<div class="card">' +
+  h += '<div class="card" data-room-context data-room-site>' +
     secHTML("visit","main","Visit details", fieldsHTML("visit", VISIT), false) +
     secHTML("log","main","Site logistics & access", fieldsHTML("log", LOGISTICS), true) +
     '</div>';
@@ -3436,7 +3451,7 @@ function surveyViewHTML(){
   }
   S.rooms.forEach(function(r){
     var nm = r.d.name || ("Room " + r.id);
-    h += '<div class="card" data-room="' + r.id + '">';
+    h += '<div class="card" data-room="' + r.id + '" data-room-context data-room-id="' + r.id + '">';
     h += '<div class="roomhd"><span class="nm">' + esc(nm) + '</span><span class="pct" data-pct="' + r.id + '"></span></div>';
     ROOM_SECTIONS.forEach(function(s){
       var inner = s.special === "light"
@@ -3514,7 +3529,7 @@ function photoRoomCardHTML(room, groups){
     if(declared[group.sectionId]) return;
     inner += photoChecklistGroupHTML(group.key,group.sectionLabel);
   });
-  return '<div class="card" data-photo-room="'+esc(roomId)+'">' +
+  return '<div class="card" data-photo-room="'+esc(roomId)+'" data-room-context data-room-id="'+esc(roomId)+'">' +
     '<div class="roomhd"><span class="nm">'+esc((room.d && room.d.name) || ("Room " + roomId))+'</span>' +
       '<span class="pct">'+groups.reduce(function(total,group){ return total + group.entries.length; },0)+' photos</span></div>' +
     inner +
@@ -3529,7 +3544,7 @@ function photosViewHTML(){
   }
   var h = '<div class="photosview" data-photos-view>' + coverCardHTML();
   var siteGroups = grouped.groups.filter(function(group){ return !group.roomId; });
-  h += '<div class="card site-photo-card">' +
+  h += '<div class="card site-photo-card" data-room-context data-room-site>' +
     '<div class="roomhd"><span class="nm">'+esc((S.visit && S.visit.site) || "Site")+'</span>' +
     '<span class="pct">'+siteGroups.reduce(function(total,group){ return total + group.entries.length; },0)+' photos</span></div>';
   h += photoChecklistGroupHTML("log|main","Site logistics & access");
@@ -3573,6 +3588,22 @@ function composePhotoHTML(entry){
     '</article>';
 }
 
+function composePhotoListHTML(manifest){
+  var previous = "";
+  var h = "";
+  manifest.forEach(function(entry){
+    var context = entry.roomId ? "room|" + entry.roomId : "site";
+    if(context !== previous){
+      h += entry.roomId
+        ? '<span class="compose-room-marker" data-room-context data-room-id="'+esc(entry.roomId)+'" aria-hidden="true"></span>'
+        : '<span class="compose-room-marker" data-room-context data-room-site aria-hidden="true"></span>';
+      previous = context;
+    }
+    h += composePhotoHTML(entry);
+  });
+  return h;
+}
+
 function composeViewHTML(){
   var manifest;
   try { manifest = photoManifest(); }
@@ -3580,7 +3611,8 @@ function composeViewHTML(){
     return '<div class="card"><div class="empty">Compose could not load the photo list. Reload before continuing.</div></div>';
   }
   var included = reportPhotoManifest(manifest).length;
-  return '<div class="composegrid" data-compose-view>' +
+  return '<span class="compose-room-marker" data-room-context data-room-site aria-hidden="true"></span>' +
+    '<div class="composegrid" data-compose-view>' +
     '<aside class="composeside">' + coverCardHTML() +
       '<section class="card composepanel"><h2>Executive summary</h2>' +
         '<p class="hint">The short version of what matters, what changed, and what happens next.</p>' +
@@ -3594,8 +3626,63 @@ function composeViewHTML(){
     '<section class="card composephotos"><div class="composephotos-head"><div><h2>Report photographs</h2>' +
       '<span class="hint">The archive keeps every original. Exclusion only changes the PDF and HTML report.</span></div>' +
       '<span class="pct">'+included+' of '+manifest.length+' included</span></div>' +
-      (manifest.length ? '<div class="compose-photo-list">'+manifest.map(composePhotoHTML).join('')+'</div>' : '<div class="empty">No photos recorded yet.</div>') +
+      (manifest.length ? '<div class="compose-photo-list">'+composePhotoListHTML(manifest)+'</div>' : '<div class="empty">No photos recorded yet.</div>') +
     '</section></div>';
+}
+
+var roomContextUpdatePending = false;
+
+function roomContextLabel(marker){
+  var roomId = marker && marker.getAttribute("data-room-id");
+  if(!roomId) return "Site / Visit";
+  for(var i=0;i<S.rooms.length;i++){
+    if(String(S.rooms[i].id) === String(roomId)){
+      return (S.rooms[i].d && S.rooms[i].d.name) || ("Room " + roomId);
+    }
+  }
+  return "Room " + roomId;
+}
+
+function updateRoomContext(){
+  roomContextUpdatePending = false;
+  var rail = document.querySelector("[data-room-context-rail]");
+  if(!rail) return;
+  var pill = rail.querySelector("[data-room-context-pill]");
+  var markers = Array.prototype.slice.call(document.querySelectorAll("[data-room-context]"));
+  if(!markers.length){ rail.hidden = true; return; }
+  rail.hidden = false;
+  var header = document.querySelector("body > header");
+  var headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+  var probe = headerBottom + 32;
+  var measured = markers.map(function(marker){
+    return {marker:marker,rect:marker.getBoundingClientRect()};
+  }).sort(function(a,b){
+    if(a.rect.top === b.rect.top) return a.rect.left - b.rect.left;
+    return a.rect.top - b.rect.top;
+  });
+  var active = measured[0];
+  for(var i=0;i<measured.length;i++){
+    if(measured[i].rect.top <= probe) active = measured[i];
+    if(measured[i].rect.top <= probe && measured[i].rect.bottom > probe){
+      active = measured[i];
+      break;
+    }
+  }
+  var label = roomContextLabel(active.marker);
+  pill.textContent = label;
+  pill.setAttribute("aria-label","Current room: " + label);
+  pill.setAttribute("data-active-room",active.marker.getAttribute("data-room-id") || "site");
+}
+
+function scheduleRoomContextUpdate(){
+  if(roomContextUpdatePending) return;
+  roomContextUpdatePending = true;
+  window.requestAnimationFrame(updateRoomContext);
+}
+
+function roomContextRailHTML(){
+  return '<div class="room-context-rail" data-room-context-rail aria-live="polite">' +
+    '<div class="room-context-pill" data-room-context-pill aria-label="Current room: Site / Visit">Site / Visit</div></div>';
 }
 
 function updateViewTabs(){
@@ -3620,13 +3707,18 @@ function switchAppView(view){
 function render(){
   var app = document.getElementById("app");
   app.className = "wrap" + (currentAppView === "compose" ? " composewrap" : "");
-  app.innerHTML = currentAppView === "photos"
+  var viewHTML = currentAppView === "photos"
     ? photosViewHTML()
     : (currentAppView === "compose" ? composeViewHTML() : surveyViewHTML());
+  app.innerHTML = roomContextRailHTML() + viewHTML;
   updateViewTabs();
   updateProgress();
   hydratePhotoThumbnails();
+  scheduleRoomContextUpdate();
 }
+
+window.addEventListener("scroll",scheduleRoomContextUpdate,false);
+window.addEventListener("resize",scheduleRoomContextUpdate,false);
 
 var composePreviewUrls = [];
 var composeNativePdfUrls = [];
@@ -3919,6 +4011,7 @@ document.addEventListener("input", function(e){
   if(k === "name"){
     var card = t.closest("[data-room]");
     if(card){ card.querySelector(".roomhd .nm").textContent = t.value || ("Room " + scope); }
+    scheduleRoomContextUpdate();
   }
   if(["lux_disp","lux_mid","lux_rear","scr_diag","scr_gain","disptype","far","viewtype"].indexOf(k) > -1){
     refreshCalc(scope);

@@ -90,6 +90,9 @@ it works with no signal — the service worker caches everything on first load.
   image without the thumbnail crop, then move through the other photos in that
   section. On a laptop, drag the handle on a photo to reorder it within that
   section; the package, PDF, and HTML report follow the same order.
+- A slim vertical room pill stays on the left edge while scrolling and follows
+  the active room across Survey, Photos, and Compose. Its upward-reading text
+  keeps multiroom visits oriented without covering the working area.
 - The top of the Photos tab makes the report cover an explicit decision. Choose
   a photo there or from the full-screen viewer; without one, the PDF uses a
   deliberate plain navy cover rather than silently taking the first photo.
