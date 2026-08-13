@@ -63,19 +63,19 @@ header{
 .corechip{font-size:11px;padding:4px 8px;border-radius:99px;background:var(--na-bg);color:var(--muted);white-space:nowrap}
 .corechip.done{background:var(--ok-bg);color:var(--ok)}
 .room-context-rail{
-  position:fixed;left:max(3px,env(safe-area-inset-left));top:50%;z-index:45;
-  width:30px;height:min(44vh,280px);transform:translateY(-50%);
+  position:fixed;left:max(4px,env(safe-area-inset-left));top:50%;z-index:45;
+  width:44px;height:min(50vh,320px);transform:translateY(-50%);
   display:flex;align-items:center;justify-content:center;pointer-events:none
 }
 .room-context-pill{
-  width:max-content;max-width:min(44vh,280px);min-height:30px;padding:6px 14px;border:1px solid var(--accent);
-  border-radius:999px;background:var(--card);color:var(--accent);
-  box-shadow:0 4px 16px rgba(0,0,0,.18);transform:rotate(-90deg);
-  font-size:11px;font-weight:750;letter-spacing:.035em;line-height:1.35;
+  flex:0 0 auto;width:min(50vh,320px);min-height:42px;padding:10px 22px;border:1px solid var(--accent);
+  border-radius:999px;background:var(--accent);color:#fff;
+  box-shadow:0 6px 22px rgba(0,0,0,.28);transform:rotate(-90deg);
+  font-size:14px;font-weight:750;letter-spacing:.025em;line-height:1.35;
   text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
 }
-@media(max-width:900px){.wrap{padding-left:38px}}
-@media(min-width:901px) and (max-width:1220px){.wrap.composewrap{padding-left:38px}}
+@media(max-width:900px){.wrap{padding-left:56px}}
+@media(min-width:901px) and (max-width:1220px){.wrap.composewrap{padding-left:56px}}
 
 /* ---------- cards / sections ---------- */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin:12px 0;overflow:hidden;scroll-margin-top:88px}
@@ -430,7 +430,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.22.5";
+var APP_VERSION = "1.22.6";
 var SCHEMA = 5;
 
 /* ============================================================

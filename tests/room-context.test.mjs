@@ -94,10 +94,16 @@ test("the left room pill follows the active room across every app view", async f
       var style = getComputedStyle(pill);
       var matrix = new DOMMatrix(style.transform);
       var rail = pill.parentNode.getBoundingClientRect();
+      var pillBox = pill.getBoundingClientRect();
       var firstCard = document.querySelector("#app .card").getBoundingClientRect();
       return {
         position:getComputedStyle(pill.parentNode).position,
         rotation:Math.round(matrix.b),
+        railWidth:rail.width,
+        pillWidth:pillBox.width,
+        pillHeight:pillBox.height,
+        fontSize:parseFloat(style.fontSize),
+        background:style.backgroundColor,
         railRight:rail.right,
         contentLeft:firstCard.left,
         active:pill.getAttribute("data-active-room")
@@ -105,6 +111,11 @@ test("the left room pill follows the active room across every app view", async f
     });
     assert.equal(initial.position,"fixed","the room pill must ride with the viewport");
     assert.equal(initial.rotation,-1,"letter tops must face the left edge");
+    assert.ok(initial.railWidth >= 44,"the room rail must be visually substantial");
+    assert.ok(initial.pillWidth >= 40,"the rotated pill must remain thick enough to read");
+    assert.ok(initial.pillHeight >= 250,"the pill must not collapse to icon size before rotation");
+    assert.ok(initial.fontSize >= 14,"the room name must remain legible");
+    assert.notEqual(initial.background,"rgba(0, 0, 0, 0)","the active-room pill needs a solid fill");
     assert.ok(initial.railRight <= initial.contentLeft,"the pill must not cover the working area");
     assert.equal(initial.active,"site");
 
