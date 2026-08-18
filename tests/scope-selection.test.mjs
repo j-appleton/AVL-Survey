@@ -313,3 +313,46 @@ test("scope controls stay compact until the surveyor chooses to edit them", asyn
     assert.equal(await surveyStateSnapshot(page),before,"opening the scope editor must remain view-only");
   });
 });
+
+test("site logistics is opt-in for a new survey without hiding existing logistics work", async function(){
+  await withApp(null,async function(page){
+    var initial = await page.evaluate(function(){
+      return {
+        skipped:!!window.__avl.S().skipped["log|main"],
+        hasWork:window.__avl.hasSurveyWork(),
+        prompt:!!document.querySelector("[data-logistics-opt-in]"),
+        section:!!document.querySelector('[data-sec="log|main"]')
+      };
+    });
+    assert.deepEqual(initial,{skipped:true,hasWork:false,prompt:true,section:false});
+
+    await page.locator('[data-logistics-opt-in] [data-skip="log|main"]').click();
+    var added = await page.evaluate(function(){
+      var section = document.querySelector('[data-sec="log|main"]');
+      return {
+        skipped:!!window.__avl.S().skipped["log|main"],
+        open:section && section.classList.contains("open"),
+        field:!!document.querySelector('[data-sec="log|main"] [data-k="access"]')
+      };
+    });
+    assert.deepEqual(added,{skipped:false,open:true,field:true});
+    await page.locator('[data-app-view="photos"]').click();
+    assert.equal(await page.locator('[data-photo-group="log|main"] [data-addph]').count(),1);
+  });
+
+  await withApp(existingState({log:{lognote:"Load-in at the east doors"}}),async function(page){
+    assert.deepEqual(await page.evaluate(function(){
+      return {
+        skipped:!!window.__avl.S().skipped["log|main"],
+        prompt:!!document.querySelector("[data-logistics-opt-in]"),
+        section:!!document.querySelector('[data-sec="log|main"]'),
+        answer:window.__avl.S().log.lognote
+      };
+    }),{
+      skipped:false,
+      prompt:false,
+      section:true,
+      answer:"Load-in at the east doors"
+    });
+  });
+});

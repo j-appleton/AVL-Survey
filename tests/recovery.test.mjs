@@ -126,6 +126,39 @@ test("connection UI explains one shared code without adding an account or recurr
   });
 });
 
+test("connected recovery status keeps the full row on a phone",async function(){
+  await withRecoveryApp(async function(page){
+    await page.setViewportSize({width:390,height:844});
+    assert.equal(await page.evaluate(function(){
+      return window.__avl.recovery().connect("PREPLOT-ONE-TIME-CODE","Phone");
+    }),true);
+    await page.waitForSelector("[data-recovery-status]");
+    var layout = await page.locator("[data-recovery-panel]").evaluate(function(panel){
+      var head = panel.querySelector(".recovery-head");
+      var copy = head.firstElementChild;
+      var actions = head.querySelector(".recovery-actions");
+      var buttons = actions.querySelectorAll("button");
+      var panelRect = panel.getBoundingClientRect();
+      var copyRect = copy.getBoundingClientRect();
+      var actionsRect = actions.getBoundingClientRect();
+      return {
+        copyWidth:copyRect.width,
+        panelWidth:panelRect.width,
+        actionsBelow:actionsRect.top >= copyRect.bottom,
+        statusFits:copy.scrollWidth <= copy.clientWidth,
+        buttonsFit:Array.prototype.every.call(buttons,function(button){
+          var rect = button.getBoundingClientRect();
+          return rect.left >= panelRect.left && rect.right <= panelRect.right;
+        })
+      };
+    });
+    assert.ok(layout.copyWidth > layout.panelWidth * .9,"recovery copy must receive the full mobile row");
+    assert.equal(layout.actionsBelow,true,"recovery actions belong below the status on mobile");
+    assert.equal(layout.statusFits,true);
+    assert.equal(layout.buttonsFit,true);
+  });
+});
+
 test("one-time connection uploads only after local persistence and verifies exact bytes",async function(){
   await withRecoveryApp(async function(page){
     await page.evaluate(function(payload){ return window.__avl.applyImport(JSON.stringify(payload)); },state("Verified client"));
