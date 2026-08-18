@@ -159,6 +159,63 @@ test("connected recovery status keeps the full row on a phone",async function(){
   });
 });
 
+test("the tiny header cloud reports verified, pending and disconnected recovery honestly",async function(){
+  await withRecoveryApp(async function(page){
+    await page.setViewportSize({width:390,height:844});
+    await page.evaluate(function(payload){ return window.__avl.applyImport(JSON.stringify(payload)); },state("Header status client"));
+    await page.waitForTimeout(350);
+    var initial = await page.locator("[data-recovery-mini]").evaluate(function(button){
+      var icon = button.querySelector("svg").getBoundingClientRect();
+      var box = button.getBoundingClientRect();
+      return {
+        state:button.getAttribute("data-recovery-mini-state"),
+        label:button.getAttribute("aria-label"),
+        width:box.width,
+        height:box.height,
+        iconWidth:icon.width
+      };
+    });
+    assert.deepEqual(initial,{
+      state:"disconnected",label:"Cloud recovery not connected",width:26,height:26,iconWidth:13
+    });
+
+    assert.equal(await page.evaluate(function(){
+      return window.__avl.recovery().connect("PREPLOT-ONE-TIME-CODE","Phone").then(function(ok){
+        if(!ok) return false;
+        window.__avl.persistSurvey();
+        return window.__avl.recovery().flush();
+      });
+    }),true);
+    await until(async function(){
+      return page.locator("[data-recovery-mini]").getAttribute("data-recovery-mini-state").then(function(value){
+        return value === "current";
+      });
+    });
+    assert.equal(await page.locator("[data-recovery-mini]").getAttribute("aria-label"),"Cloud recovery current");
+
+    await page.evaluate(function(){
+      window.__recoveryOnline = false;
+      var input = document.querySelector('[data-scope="visit"][data-k="client"]');
+      input.value = "Edited without signal";
+      input.dispatchEvent(new Event("input",{bubbles:true}));
+    });
+    await page.waitForTimeout(350);
+    assert.equal(await page.locator("[data-recovery-mini]").getAttribute("data-recovery-mini-state"),"pending");
+    assert.equal(await page.locator("[data-recovery-mini]").getAttribute("aria-label"),"Cloud recovery waiting for a connection");
+
+    await page.locator('[data-app-view="photos"]').click();
+    await page.locator("[data-recovery-mini]").click();
+    await until(async function(){
+      return page.evaluate(function(){
+        var panel = document.getElementById("recoverywrap");
+        if(!panel || window.__avl.appView() !== "survey") return false;
+        var rect = panel.getBoundingClientRect();
+        return rect.bottom > 0 && rect.top < innerHeight;
+      });
+    });
+  });
+});
+
 test("one-time connection uploads only after local persistence and verifies exact bytes",async function(){
   await withRecoveryApp(async function(page){
     await page.evaluate(function(payload){ return window.__avl.applyImport(JSON.stringify(payload)); },state("Verified client"));

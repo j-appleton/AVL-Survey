@@ -62,6 +62,15 @@ header{
 .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .25s}
 .corechip{font-size:11px;padding:4px 8px;border-radius:99px;background:var(--na-bg);color:var(--muted);white-space:nowrap}
 .corechip.done{background:var(--ok-bg);color:var(--ok)}
+.recovery-mini{
+  width:26px;height:26px;padding:0;border:0;border-radius:99px;background:transparent;color:var(--muted);
+  display:grid;place-items:center;cursor:pointer;flex:0 0 auto
+}
+.recovery-mini svg{width:13px;height:13px;display:block;fill:currentColor}
+.recovery-mini[data-recovery-mini-state="current"]{color:var(--ok)}
+.recovery-mini[data-recovery-mini-state="pending"]{color:var(--warn)}
+.recovery-mini[data-recovery-mini-state="attention"]{color:var(--danger)}
+.recovery-mini:focus{outline:2px solid var(--accent);outline-offset:1px}
 .room-context-rail{
   position:fixed;left:max(4px,env(safe-area-inset-left));top:50%;z-index:45;
   width:44px;height:min(50vh,320px);transform:translateY(-50%);
@@ -72,8 +81,25 @@ header{
   border-radius:999px;background:var(--accent);color:#fff;
   box-shadow:0 6px 22px rgba(0,0,0,.28);transform:rotate(-90deg);
   font-size:14px;font-weight:750;letter-spacing:.025em;line-height:1.35;
-  text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-family:inherit;cursor:pointer;pointer-events:auto
 }
+.room-context-pill:focus{outline:3px solid var(--card);outline-offset:-5px}
+.room-jump-menu{
+  position:fixed;left:max(54px,calc(env(safe-area-inset-left) + 54px));top:50%;z-index:46;
+  width:min(250px,calc(100vw - 72px));max-height:min(70vh,430px);overflow:auto;
+  transform:translateY(-50%);padding:8px;border:1px solid var(--line);border-radius:12px;
+  background:var(--card);box-shadow:0 12px 36px rgba(0,0,0,.32);pointer-events:auto
+}
+.room-jump-menu[hidden]{display:none}
+.room-jump-title{padding:4px 7px 7px;color:var(--muted);font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
+.room-jump-menu button{
+  width:100%;min-height:40px;padding:8px 10px;border:0;border-radius:8px;background:transparent;color:var(--ink);
+  font:inherit;font-size:13px;font-weight:650;text-align:left;cursor:pointer;white-space:normal
+}
+.room-jump-menu button+button{margin-top:2px}
+.room-jump-menu button[aria-current="location"]{background:var(--accent-soft);color:var(--accent)}
+.room-jump-menu button:focus{outline:2px solid var(--accent);outline-offset:-2px}
 @media(max-width:900px){.wrap{padding-left:56px}}
 @media(min-width:901px) and (max-width:1220px){.wrap.composewrap{padding-left:56px}}
 
@@ -408,6 +434,9 @@ button.btn:active{transform:translateY(1px)}
     <div style="flex:1">
       <h1>PrePlot</h1>
     </div>
+    <button type="button" class="recovery-mini" data-recovery-mini data-recovery-mini-state="disconnected" aria-label="Cloud recovery not connected" title="Cloud recovery not connected">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.4 10.1A6.5 6.5 0 0 0 5.9 8.4 4.8 4.8 0 0 0 6.2 18h11.7a4 4 0 0 0 .5-7.9Z"/></svg>
+    </button>
     <span class="corechip" id="corechip">core 0/0</span>
   </div>
   <div class="viewtabs" role="tablist" aria-label="Survey view">
@@ -458,7 +487,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.23.3";
+var APP_VERSION = "1.24.0";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -1191,6 +1220,34 @@ function updateStorageBar(){
 function updateRecoveryPanel(){
   var el = document.getElementById("recoverywrap");
   if(el && recoveryController) el.innerHTML = recoveryController.html();
+  updateRecoveryMini();
+}
+function recoveryMiniStatus(){
+  if(!recoveryController) return {state:"disconnected",label:"Cloud recovery unavailable"};
+  var status = recoveryController.status();
+  if(!status.connected) return {state:"disconnected",label:"Cloud recovery not connected"};
+  if(status.phase === "failed") return {state:"attention",label:"Cloud recovery needs attention"};
+  if(status.phase === "verified" && !status.dirty &&
+     status.stateUpdated && S.meta && status.stateUpdated === S.meta.updated){
+    return {state:"current",label:"Cloud recovery current"};
+  }
+  return {state:"pending",label:status.phase === "waiting" ? "Cloud recovery waiting for a connection" : "Cloud recovery pending"};
+}
+function updateRecoveryMini(){
+  var button = document.querySelector("[data-recovery-mini]");
+  if(!button) return;
+  var value = recoveryMiniStatus();
+  button.setAttribute("data-recovery-mini-state",value.state);
+  button.setAttribute("aria-label",value.label);
+  button.setAttribute("title",value.label);
+}
+function jumpToRecoveryPanel(){
+  currentAppView = "survey";
+  render();
+  window.requestAnimationFrame(function(){
+    var panel = document.getElementById("recoverywrap");
+    if(panel) panel.scrollIntoView({behavior:"smooth",block:"center"});
+  });
 }
 function refreshStorageEstimate(){
   if(!navigator.storage || !navigator.storage.estimate) return;
@@ -3461,6 +3518,7 @@ function updateProgress(){
   var chip = document.getElementById("corechip");
   chip.textContent = "core " + cd + "/" + c;
   chip.className = "corechip" + (c > 0 && cd === c ? " done" : "");
+  updateRecoveryMini();
   S.rooms.forEach(function(r){
     var el = document.querySelector('[data-pct="' + r.id + '"]');
     if(el){ var p = progress(r.id); el.textContent = p.coreDone + "/" + p.core + " core"; }
@@ -3833,6 +3891,8 @@ function composeViewHTML(){
 }
 
 var roomContextUpdatePending = false;
+var roomContextActiveId = "site";
+var roomJumpOpen = false;
 
 function roomContextLabel(marker){
   var roomId = marker && marker.getAttribute("data-room-id");
@@ -3871,9 +3931,14 @@ function updateRoomContext(){
     }
   }
   var label = roomContextLabel(active.marker);
+  roomContextActiveId = active.marker.getAttribute("data-room-id") || "site";
   pill.textContent = label;
   pill.setAttribute("aria-label","Current room: " + label);
-  pill.setAttribute("data-active-room",active.marker.getAttribute("data-room-id") || "site");
+  pill.setAttribute("data-active-room",roomContextActiveId);
+  Array.prototype.forEach.call(rail.querySelectorAll("[data-room-jump]"),function(button){
+    if(button.getAttribute("data-room-jump") === roomContextActiveId) button.setAttribute("aria-current","location");
+    else button.removeAttribute("aria-current");
+  });
 }
 
 function scheduleRoomContextUpdate(){
@@ -3883,8 +3948,48 @@ function scheduleRoomContextUpdate(){
 }
 
 function roomContextRailHTML(){
-  return '<div class="room-context-rail" data-room-context-rail aria-live="polite">' +
-    '<div class="room-context-pill" data-room-context-pill aria-label="Current room: Site / Visit">Site / Visit</div></div>';
+  var items = '<button type="button" data-room-jump="site"'+(roomContextActiveId === "site" ? ' aria-current="location"' : '')+'>Site / Visit</button>';
+  S.rooms.forEach(function(room){
+    var id = String(room.id);
+    var label = (room.d && room.d.name) || ("Room " + id);
+    items += '<button type="button" data-room-jump="'+esc(id)+'"'+(roomContextActiveId === id ? ' aria-current="location"' : '')+'>'+esc(label)+'</button>';
+  });
+  return '<div class="room-context-rail" data-room-context-rail>' +
+    '<button type="button" class="room-context-pill" data-room-context-pill aria-label="Current room: Site / Visit" aria-expanded="'+roomJumpOpen+'" aria-controls="roomJumpMenu">Site / Visit</button>' +
+    '<div class="room-jump-menu" id="roomJumpMenu" data-room-jump-menu'+(roomJumpOpen ? '' : ' hidden')+'>' +
+      '<div class="room-jump-title">Jump to</div>'+items+'</div></div>';
+}
+
+function closeRoomJumpMenu(){
+  roomJumpOpen = false;
+  var menu = document.querySelector("[data-room-jump-menu]");
+  var pill = document.querySelector("[data-room-context-pill]");
+  if(menu) menu.hidden = true;
+  if(pill) pill.setAttribute("aria-expanded","false");
+}
+
+function toggleRoomJumpMenu(){
+  roomJumpOpen = !roomJumpOpen;
+  var menu = document.querySelector("[data-room-jump-menu]");
+  var pill = document.querySelector("[data-room-context-pill]");
+  if(menu) menu.hidden = !roomJumpOpen;
+  if(pill) pill.setAttribute("aria-expanded",String(roomJumpOpen));
+  if(roomJumpOpen && menu){
+    var current = menu.querySelector('[aria-current="location"]') || menu.querySelector("button");
+    if(current) current.focus();
+  }
+}
+
+function jumpToRoomContext(roomId){
+  closeRoomJumpMenu();
+  var selector = roomId === "site"
+    ? "[data-room-context][data-room-site]"
+    : '[data-room-context][data-room-id="'+CSS.escape(roomId)+'"]';
+  var marker = document.querySelector(selector);
+  if(marker){
+    marker.scrollIntoView({behavior:"smooth",block:"start"});
+    window.requestAnimationFrame(scheduleRoomContextUpdate);
+  }
 }
 
 function updateViewTabs(){
@@ -3897,6 +4002,7 @@ function switchAppView(view){
   if(view !== "survey" && view !== "photos" && view !== "compose") return false;
   clearPhotoDragState();
   resetAllPhotoDeletes();
+  roomJumpOpen = false;
   if(view !== "photos" && view !== "compose"){
     coverSelectMode = false;
     coverCandidate = "";
@@ -4163,6 +4269,12 @@ document.addEventListener("drop",function(e){
 });
 document.addEventListener("dragend",function(){ clearPhotoDragState(); });
 document.addEventListener("keydown",function(e){
+  if(e.key === "Escape" && roomJumpOpen){
+    closeRoomJumpMenu();
+    var roomPill = document.querySelector("[data-room-context-pill]");
+    if(roomPill) roomPill.focus();
+    return;
+  }
   var handle = e.target.closest && e.target.closest("[data-photo-drag-handle]");
   if(!handle || ["ArrowLeft","ArrowUp","ArrowRight","ArrowDown"].indexOf(e.key) < 0) return;
   var item = handle.closest("[data-photo-reorder]");
@@ -4256,8 +4368,22 @@ document.addEventListener("focusin",function(e){
 });
 
 document.addEventListener("click", function(e){
+  if(roomJumpOpen && !(e.target.closest && e.target.closest("[data-room-context-rail]"))) closeRoomJumpMenu();
   var t = e.target.closest("button, .skipbtn");
   if(!t) return;
+
+  if(t.hasAttribute && t.hasAttribute("data-recovery-mini")){
+    jumpToRecoveryPanel();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-room-context-pill")){
+    toggleRoomJumpMenu();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-room-jump")){
+    jumpToRoomContext(t.getAttribute("data-room-jump"));
+    return;
+  }
 
   if(t.hasAttribute && t.hasAttribute("data-app-view")){
     switchAppView(t.getAttribute("data-app-view"));
