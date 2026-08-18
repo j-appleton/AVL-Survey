@@ -299,17 +299,22 @@ button.btn:active{transform:translateY(1px)}
 .roomhd{display:flex;align-items:center;gap:8px;padding:12px 14px;background:var(--accent-soft);border-bottom:1px solid var(--line)}
 .roomhd .nm{flex:1;font-weight:700;font-size:16px}
 .roomhd .pct{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
-.scopepanel{padding:14px;background:var(--card);border-bottom:1px solid var(--line)}
-.scopepanel.visit-scope{margin:12px 0;border:1px solid var(--line);border-radius:var(--radius)}
-.scopehead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
-.scopehead b{display:block;font-size:14px}.scopehead .hint{margin:2px 0 0}
-.scopebulk{display:flex;gap:5px;flex:none}.scopebulk button{padding:5px 8px}
-.scopechips{display:flex;flex-wrap:wrap;gap:7px}
-.scopechips button{
-  min-height:38px;padding:8px 11px;border:1px solid var(--line);border-radius:999px;
-  background:var(--bg);color:var(--muted);font:inherit;font-size:12px;font-weight:650;cursor:pointer
-}
-.scopechips button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.scopepanel{background:var(--card);border-bottom:1px solid var(--line)}
+.scopepanel.visit-scope{margin:12px 0;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.scope-summary{width:100%;min-height:62px;padding:11px 14px;display:flex;align-items:center;gap:10px;border:0;background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.scope-summary-copy{flex:1;min-width:0}.scope-summary-title{display:block;font-size:14px;font-weight:750}
+.scope-summary-detail{display:block;margin-top:2px;color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scope-summary-count{flex:none;padding:5px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:750;font-variant-numeric:tabular-nums}
+.scope-summary .car{flex:none;color:var(--muted);font-size:11px;transition:transform .15s}.scopepanel.scope-open .scope-summary .car{transform:rotate(90deg)}
+.scopepanel.scope-open .scope-summary{border-bottom:1px solid var(--line)}
+.scopeeditor{padding:11px 14px 14px}.scopeeditor-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.scopeeditor-head .hint{margin:0}.scopebulk{display:flex;gap:5px;flex:none}.scopebulk button{padding:5px 8px}
+.scopechips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.scopechips button{min-height:41px;padding:7px 9px;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--muted);font:inherit;font-size:11.5px;font-weight:650;text-align:left;cursor:pointer}
+.scopechips button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent-soft);color:var(--ink)}
+.scopecheck{width:19px;height:19px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:50%;color:transparent;font-size:11px;font-weight:800}
+.scopechips button[aria-pressed="true"] .scopecheck{background:var(--accent);border-color:var(--accent);color:#fff}
+.room-scope .scope-summary{min-height:56px}.room-scope .scopeeditor{background:var(--bg)}
 .room-scope-hidden{margin-top:8px;color:var(--muted);font-size:11px}
 .photo-group.out-of-scope{background:var(--na-bg)}
 .photo-group.out-of-scope .photo-group-title{color:var(--muted)}
@@ -445,7 +450,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.23.0";
+var APP_VERSION = "1.23.1";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -3458,6 +3463,8 @@ function updateProgress(){
 var currentAppView = "survey";
 var coverSelectMode = false;
 var coverCandidate = "";
+var visitScopeEditorOpen = false;
+var roomScopeEditorsOpen = {};
 
 function coverManifestEntry(identity){
   if(!identity) return null;
@@ -3537,15 +3544,28 @@ function secHTML(scope, id, title, inner, skippable){
 }
 
 function visitScopeHTML(){
-  return '<section class="scopepanel visit-scope" data-visit-scope-panel>' +
-    '<div class="scopehead"><div><b>Visit scope</b>' +
-      '<span class="hint">Everything starts included. Turn off disciplines that are not part of this visit.</span></div>' +
+  var enabledScopes = VISIT_SCOPES.filter(function(scope){ return visitScopeEnabled(scope.id); });
+  var detail = enabledScopes.length === VISIT_SCOPES.length
+    ? "All disciplines included"
+    : (enabledScopes.length ? enabledScopes.map(function(scope){ return scope.title; }).join(" · ") : "No disciplines included");
+  var editor = '';
+  if(visitScopeEditorOpen){
+    editor = '<div class="scopeeditor"><div class="scopeeditor-head">' +
+      '<span class="hint">Turn off anything that is not part of this visit.</span>' +
       '<div class="scopebulk"><button type="button" class="btn sm ghost" data-visit-scope-all>All</button>' +
       '<button type="button" class="btn sm ghost" data-visit-scope-clear>Clear</button></div></div>' +
-    '<div class="scopechips">' + VISIT_SCOPES.map(function(scope){
+      '<div class="scopechips">' + VISIT_SCOPES.map(function(scope){
       var enabled = visitScopeEnabled(scope.id);
-      return '<button type="button" data-visit-scope="'+esc(scope.id)+'" aria-pressed="'+enabled+'">'+esc(scope.title)+'</button>';
-    }).join('') + '</div></section>';
+      return '<button type="button" data-visit-scope="'+esc(scope.id)+'" aria-pressed="'+enabled+'">' +
+        '<span class="scopecheck" aria-hidden="true">&#10003;</span><span>'+esc(scope.title)+'</span></button>';
+    }).join('') + '</div></div>';
+  }
+  return '<section class="scopepanel visit-scope'+(visitScopeEditorOpen ? ' scope-open' : '')+'" data-visit-scope-panel>' +
+    '<button type="button" class="scope-summary" data-visit-scope-editor aria-expanded="'+visitScopeEditorOpen+'">' +
+      '<span class="scope-summary-copy"><span class="scope-summary-title">Visit scope</span>' +
+      '<span class="scope-summary-detail">'+esc(detail)+'</span></span>' +
+      '<span class="scope-summary-count">'+enabledScopes.length+'/'+VISIT_SCOPES.length+'</span><span class="car">&#9656;</span>' +
+    '</button>' + editor + '</section>';
 }
 
 function roomScopeHTML(room){
@@ -3555,15 +3575,27 @@ function roomScopeHTML(room){
     if(section.scope && !visitScopeEnabled(section.scope)){ hidden++; return false; }
     return true;
   });
-  return '<div class="scopepanel" data-room-scope-panel="'+esc(room.id)+'">' +
-    '<div class="scopehead"><div><b>Sections for this room</b>' +
-      '<span class="hint">Add only what this space needs.</span></div></div>' +
-    '<div class="scopechips">' + available.map(function(section){
+  var selectedCount = available.filter(function(section){ return roomSectionLocalSelected(room.id,section.id); }).length;
+  var detail = selectedCount ? selectedCount+' section'+(selectedCount === 1 ? '' : 's')+' added' : 'Room details only';
+  if(hidden) detail += ' · '+hidden+' unavailable';
+  var open = !!roomScopeEditorsOpen[String(room.id)];
+  var editor = '';
+  if(open){
+    editor = '<div class="scopeeditor"><div class="scopeeditor-head"><span class="hint">Add only what this space needs.</span></div>' +
+      '<div class="scopechips">' + available.map(function(section){
       var selected = roomSectionLocalSelected(room.id,section.id);
-      return '<button type="button" data-room-section="'+esc(section.id)+'" data-room-id="'+esc(room.id)+'" aria-pressed="'+selected+'">'+esc(section.title)+'</button>';
+      return '<button type="button" data-room-section="'+esc(section.id)+'" data-room-id="'+esc(room.id)+'" aria-pressed="'+selected+'">' +
+        '<span class="scopecheck" aria-hidden="true">&#10003;</span><span>'+esc(section.title)+'</span></button>';
     }).join('') + '</div>' +
-    (hidden ? '<div class="room-scope-hidden">'+hidden+' section'+(hidden === 1 ? '' : 's')+' hidden by Visit scope.</div>' : '') +
-    '</div>';
+      (hidden ? '<div class="room-scope-hidden">'+hidden+' section'+(hidden === 1 ? '' : 's')+' hidden by Visit scope.</div>' : '') +
+      '</div>';
+  }
+  return '<div class="scopepanel room-scope'+(open ? ' scope-open' : '')+'" data-room-scope-panel="'+esc(room.id)+'">' +
+    '<button type="button" class="scope-summary" data-room-scope-editor="'+esc(room.id)+'" aria-expanded="'+open+'">' +
+      '<span class="scope-summary-copy"><span class="scope-summary-title">Room sections</span>' +
+      '<span class="scope-summary-detail">'+esc(detail)+'</span></span>' +
+      '<span class="scope-summary-count">'+selectedCount+'/'+available.length+'</span><span class="car">&#9656;</span>' +
+    '</button>' + editor + '</div>';
 }
 
 function surveyViewHTML(){
@@ -4212,6 +4244,17 @@ document.addEventListener("click", function(e){
     return;
   }
 
+  if(t.hasAttribute && t.hasAttribute("data-visit-scope-editor")){
+    visitScopeEditorOpen = !visitScopeEditorOpen;
+    render();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-room-scope-editor")){
+    var roomScopeEditorId = t.getAttribute("data-room-scope-editor");
+    roomScopeEditorsOpen[roomScopeEditorId] = !roomScopeEditorsOpen[roomScopeEditorId];
+    render();
+    return;
+  }
   if(t.hasAttribute && t.hasAttribute("data-visit-scope")){
     var visitScopeKey = "global|" + t.getAttribute("data-visit-scope");
     if(S.skipped[visitScopeKey]) delete S.skipped[visitScopeKey];
@@ -4445,6 +4488,7 @@ document.addEventListener("click", function(e){
       Object.keys(S.ui).forEach(function(key){
         if(key.indexOf(rid + "|") === 0) delete S.ui[key];
       });
+      delete roomScopeEditorsOpen[rid];
       save(); render();
     });
     return;
@@ -4455,6 +4499,7 @@ document.addEventListener("click", function(e){
     S.rooms.push(r);
     initialiseRoomScope(r.id);
     S.ui[r.id + "|id"] = true;
+    roomScopeEditorsOpen[String(r.id)] = true;
     save(); render();
     var card = document.querySelector('[data-room="' + r.id + '"]');
     if(card) card.scrollIntoView({behavior:"smooth", block:"start"});
