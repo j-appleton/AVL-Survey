@@ -141,7 +141,7 @@ test("chips preserve a legacy string when a second option is selected", async fu
         rooms:[{id:1,d:{name:"Legacy control",ctrl:"Touch panel"}}],
         photos:{},
         skipped:{},
-        ui:{"1|exist":true}
+        ui:{"1|control":true}
       }));
     });
     assert.equal(imported, true);
@@ -225,7 +225,7 @@ test("rendering a legacy chip string leaves the stored value untouched", async f
         rooms:[{id:1,d:{name:"Legacy rendering",ctrl:"Touch panel"}}],
         photos:{},
         skipped:{},
-        ui:{"1|exist":true,"1|dims":true}
+        ui:{"1|control":true,"1|dims":true}
       }));
     });
     assert.equal(imported, true);

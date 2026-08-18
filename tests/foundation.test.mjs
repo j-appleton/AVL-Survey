@@ -92,7 +92,8 @@ test("data migrations, validation, backup, salvage, and storage warnings", async
       updated:"2026-07-21T11:00:00.000Z",
       app:"1.9.1",
       retained:"keep me",
-      migratedFrom:2
+      migratedFrom:2,
+      roomScopeVersion:2
     });
 
     var rejectionResults = await page.evaluate(function(){

@@ -234,7 +234,7 @@ test("CRM note walks canonical fields, preserves blanks and ships once at the ar
     direct.lightLabels.forEach(function(label){
       assert.match(direct.text,new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + ":"));
     });
-    assert.match(direct.text,/AUDIO\r\nNot applicable/);
+    assert.doesNotMatch(direct.text,/\r\nAUDIO\r\n/);
     assert.doesNotMatch(direct.text,/Ambient noise \(dBA\):/);
     assert.match(direct.expanded,/Future field: Arrived automatically/);
     assert.doesNotMatch(direct.text,/data:image|coverPhotoId|photoFormat/);
@@ -309,7 +309,7 @@ test("commercial context stays internal to the app, package data and CRM note", 
 
 test("architectural lighting replacement and count reach the package, CRM note and report model", async function(){
   await withApp(crmState(),async function(page){
-    await page.locator('[data-toggle="1|exist"]').click();
+    await page.locator('[data-toggle="1|lighting"]').click();
     var checkbox = page.locator('[data-scope="1"][data-k="archlight"]');
     var count = page.locator('[data-scope="1"][data-k="lightcount"]');
     await checkbox.check();
@@ -317,15 +317,14 @@ test("architectural lighting replacement and count reach the package, CRM note a
     var result = await page.evaluate(function(){
       var state = window.__avl.S();
       var model = window.__avl.buildReportModel();
-      var control = model.rooms[0].cards.filter(function(card){
-        return card.header === "Control";
-      })[0];
       return {
         checked:document.querySelector('[data-scope="1"][data-k="archlight"]').checked,
         state:{archlight:state.rooms[0].d.archlight,lightcount:state.rooms[0].d.lightcount},
         packaged:window.__avl.packageEnvelope([]).data.rooms[0].d,
         crm:window.__avl.crmNoteText(),
-        control:control
+        lighting:model.rooms[0].rows.filter(function(row){
+          return /^Lighting /.test(row.label);
+        })
       };
     });
     assert.equal(result.checked,true);
@@ -334,11 +333,11 @@ test("architectural lighting replacement and count reach the package, CRM note a
     assert.equal(result.packaged.lightcount,"18");
     assert.match(result.crm,/Architectural lighting replacement: Yes/);
     assert.match(result.crm,/Architectural light count: 18/);
-    assert.deepEqual(result.control.bullets.filter(function(item){
-      return /^Architectural/.test(item.label);
+    assert.deepEqual(result.lighting.filter(function(item){
+      return /Architectural/.test(item.label);
     }),[
-      {label:"Architectural lighting replacement",value:"Yes"},
-      {label:"Architectural light count",value:"18"}
+      {label:"Lighting \u00b7 Architectural lighting replacement",value:"Yes"},
+      {label:"Lighting \u00b7 Architectural light count",value:"18"}
     ]);
   });
 });
