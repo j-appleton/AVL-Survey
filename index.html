@@ -95,6 +95,9 @@ header{
 .sec.open .secbody{display:block}
 .sec.skipped .sechd .t{opacity:.45;text-decoration:line-through}
 .sec.skipped .secbody{display:none}
+.logistics-optin{min-height:62px;padding:11px 14px;display:flex;align-items:center;gap:12px;border-top:1px solid var(--line)}
+.logistics-optin-copy{flex:1;min-width:0}.logistics-optin-title{display:block;font-size:15px;font-weight:650}
+.logistics-optin-detail{display:block;margin-top:2px;color:var(--muted);font-size:11px}
 
 /* ---------- fields ---------- */
 .f{margin:12px 0}
@@ -329,6 +332,11 @@ button.btn:active{transform:translateY(1px)}
 .recovery-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .recovery-head>div:first-child{flex:1;min-width:0}.recovery-head .flab{margin:0 0 2px}
 .recovery-actions,.recovery-connect .roomtools{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;padding:0;border:0;background:none}
+@media(max-width:600px){
+  .recovery-head{display:block}.recovery-head>div:first-child{width:100%}
+  .recovery-head>.recovery-actions{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin-top:11px}
+  .recovery-head>.recovery-actions .btn{min-width:0;white-space:normal}
+}
 .recovery-connect{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .recovery-connect input{margin-bottom:8px;text-transform:uppercase;letter-spacing:.03em}
 .recovery-list{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
@@ -450,7 +458,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.23.1";
+var APP_VERSION = "1.23.2";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -725,7 +733,7 @@ function minDiag(farFt, analytical){
 function nowISO(){ try { return new Date().toISOString(); } catch(e){ return ""; } }
 function blankState(){
   return {
-    visit:{}, log:{}, rooms:[], photos:{}, captions:{}, compose:{summary:"",excluded:{}}, skipped:{}, ui:{},
+    visit:{}, log:{}, rooms:[], photos:{}, captions:{}, compose:{summary:"",excluded:{}}, skipped:{"log|main":true}, ui:{},
     meta:{created:nowISO(), updated:nowISO(), app:APP_VERSION, roomScopeVersion:2}
   };
 }
@@ -1103,7 +1111,9 @@ function hasSurveyWork(){
       if(answered(scopes[i][keys[j]])) return true;
     }
   }
-  return Object.keys(S.skipped || {}).some(function(k){ return !!S.skipped[k]; });
+  return Object.keys(S.skipped || {}).some(function(k){
+    return k !== "log|main" && !!S.skipped[k];
+  });
 }
 function storageHTML(){
   var salvage = store.get(SALVAGE_KEY);
@@ -3538,9 +3548,19 @@ function secHTML(scope, id, title, inner, skippable){
     '<button class="sechd" type="button" data-toggle="' + esc(key) + '">' +
       '<span class="car">&#9656;</span><span class="t">' + esc(title) + '</span>' +
       (skippable ? '<span class="skipbtn" data-skip="' + esc(key) + '">' +
-        (scope === "log" ? (skipped ? "include" : "skip") : "remove") + '</span>' : "") +
+        (scope === "log" ? (skipped ? "add" : "remove") : "remove") + '</span>' : "") +
     '</button>' +
     '<div class="secbody">' + inner + '</div></div>';
+}
+
+function logisticsHTML(){
+  if(!S.skipped["log|main"]){
+    return secHTML("log","main","Site logistics & access",fieldsHTML("log",LOGISTICS),true);
+  }
+  return '<div class="logistics-optin" data-logistics-opt-in>' +
+    '<span class="logistics-optin-copy"><span class="logistics-optin-title">Site logistics &amp; access</span>' +
+    '<span class="logistics-optin-detail">Add when access, staging or working conditions need to be captured.</span></span>' +
+    '<button type="button" class="btn sm" data-skip="log|main">Add</button></div>';
 }
 
 function visitScopeHTML(){
@@ -3606,7 +3626,7 @@ function surveyViewHTML(){
   /* visit + logistics */
   h += '<div class="card" data-room-context data-room-site>' +
     secHTML("visit","main","Visit details", fieldsHTML("visit", VISIT), false) +
-    secHTML("log","main","Site logistics & access", fieldsHTML("log", LOGISTICS), true) +
+    logisticsHTML() +
     '</div>';
 
   /* rooms */
@@ -4306,8 +4326,13 @@ document.addEventListener("click", function(e){
   if(sk){
     e.stopPropagation(); e.preventDefault();
     var key = sk.getAttribute("data-skip");
-    if(S.skipped[key]) delete S.skipped[key];
-    else S.skipped[key] = true;
+    if(S.skipped[key]){
+      delete S.skipped[key];
+      if(key === "log|main") S.ui[key] = true;
+    } else {
+      S.skipped[key] = true;
+      if(key === "log|main") S.ui[key] = false;
+    }
     save(); render();
     return;
   }
