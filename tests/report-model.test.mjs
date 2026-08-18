@@ -92,6 +92,7 @@ test("the PDF renderer consumes the report model without reaching back into surv
       var model = window.__avl.buildReportModel(manifest);
       model.cover.client = "MODEL ONLY CLIENT";
       model.rooms[0].title = "MODEL ONLY ROOM";
+      model.engineering.commercial = [{label:"Budget",value:"MODEL ONLY SECRET"}];
       window.__avl.S().visit.client = "STATE CLIENT MUST NOT RENDER";
       window.__avl.S().rooms[0].d.name = "STATE ROOM MUST NOT RENDER";
       var report = window.__avl.assemblePdfReportModel(model,[{
@@ -106,7 +107,7 @@ test("the PDF renderer consumes the report model without reaching back into surv
     },JPG_BYTES);
     assert.deepEqual(
       Object.keys(result.model),
-      ["summary","cover","overview","rooms","photos"]
+      ["summary","engineering","cover","overview","rooms","photos"]
     );
     assert.deepEqual(
       Object.keys(result.model.rooms[0]).sort(),
@@ -116,6 +117,7 @@ test("the PDF renderer consumes the report model without reaching back into surv
     assert.match(result.raw,/MODEL ONLY ROOM/);
     assert.doesNotMatch(result.raw,/STATE CLIENT MUST NOT RENDER/);
     assert.doesNotMatch(result.raw,/STATE ROOM MUST NOT RENDER/);
+    assert.doesNotMatch(result.raw,/MODEL ONLY SECRET/);
     var titleMatch = result.raw.match(/\/Title <FEFF([0-9A-F]+)>/);
     assert.ok(titleMatch,"the PDF must carry a Unicode document title");
     var title = "";

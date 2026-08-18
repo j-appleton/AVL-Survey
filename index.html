@@ -458,7 +458,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.23.2";
+var APP_VERSION = "1.23.3";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -476,10 +476,10 @@ var VISIT = [
   {k:"scope",   l:"Scope as understood on arrival", t:"area", h:"Note anything that doesn't match the sales scope."},
   {k:"integrators", l:"Integrator involvement", t:"sel",
     o:["","Only us","Multiple integrators","Unknown"],
-    h:"Are we the only integrator, or is the work competitive / split? Internal only."},
+    h:"Are we the only integrator, or is the work competitive / split? Internal only - included in the engineering report, CRM note and saved package; never the client PDF."},
   {k:"competition", l:"Other integrators / competition", t:"text",
-    h:"Who else is quoting or carrying part of the work? Internal only - included in the CRM note and saved package, never the PDF or engineering report."},
-  {k:"budget",  l:"Budget / approved range", t:"text", h:"Internal only - included in the CRM note and saved package, never the PDF or engineering report."}
+    h:"Who else is quoting or carrying part of the work? Internal only - included in the engineering report, CRM note and saved package; never the client PDF."},
+  {k:"budget",  l:"Budget / approved range", t:"text", h:"Internal only - included in the engineering report, CRM note and saved package; never the client PDF."}
 ];
 
 var LOGISTICS = [
@@ -6154,6 +6154,16 @@ function reportOverviewItems(){
   });
   return items;
 }
+function reportEngineeringContext(){
+  var rows = [];
+  function add(label,value){
+    if(answered(value)) rows.push({label:label,value:disp(value)});
+  }
+  add("Budget / approved range",S.visit.budget);
+  add("Integrator involvement",S.visit.integrators);
+  add("Other integrators / competition",S.visit.competition);
+  return rows;
+}
 function reportCoverImageIndex(manifest){
   if(!manifest.length) return null;
   var chosen = S.visit.coverPhotoId;
@@ -6207,6 +6217,7 @@ function buildReportModel(manifest){
   });
   return {
     summary:composeSummary(),
+    engineering:{commercial:reportEngineeringContext()},
     cover:{
       client:String(S.visit.client || ""),
       site:String(S.visit.site || ""),
@@ -6512,6 +6523,12 @@ function buildHtmlReport(report,photoSources){
     ".local-note{margin:18px 0 0;color:#d8e1ea;font-size:.9rem}" +
     ".executive-summary{margin-top:36px;background:var(--card);border-left:5px solid var(--teal);" +
     "border-radius:8px;padding:20px 22px}.executive-summary p{margin:8px 0 0;white-space:pre-wrap}" +
+    ".engineering-context{margin-top:24px;border:1px solid #d6dee7;border-top:4px solid var(--gold);" +
+    "border-radius:9px;padding:18px 20px}.internal-kicker{text-transform:uppercase;letter-spacing:.1em;" +
+    "font-size:.7rem;font-weight:700;color:var(--teal);margin-bottom:4px}.commercial-table{width:100%;" +
+    "border-collapse:collapse;margin-top:12px}.commercial-table th,.commercial-table td{text-align:left;" +
+    "vertical-align:top;padding:9px 10px}.commercial-table tr:nth-child(odd){background:var(--card)}" +
+    ".commercial-table th{width:34%;color:var(--muted);font-size:.78rem}" +
     "main section{margin-top:48px}.section-title{display:flex;align-items:end;justify-content:space-between;" +
     "gap:12px;border-bottom:3px solid var(--navy);padding-bottom:10px;margin-bottom:18px}" +
     "h2{font-size:1.75rem;line-height:1.15;margin:0;color:var(--navy)}h3{margin:0;color:var(--navy)}" +
@@ -6577,6 +6594,16 @@ function buildHtmlReport(report,photoSources){
   if(report.summary){
     h.push('<section class="executive-summary"><h2>Executive summary</h2><p>' +
       reportHtmlEsc(report.summary) + '</p></section>');
+  }
+
+  var commercial = report.engineering && report.engineering.commercial || [];
+  if(commercial.length){
+    h.push('<section class="engineering-context"><div class="internal-kicker">Internal engineering context</div>' +
+      '<h2>Commercial context</h2><table class="commercial-table"><tbody>');
+    commercial.forEach(function(row){
+      h.push('<tr><th>' + reportHtmlEsc(row.label) + '</th><td>' + reportHtmlEsc(row.value) + '</td></tr>');
+    });
+    h.push('</tbody></table></section>');
   }
 
   if(report.overview.length){
