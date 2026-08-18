@@ -33,6 +33,16 @@ async function withApp(state,run){
   }
 }
 
+async function openVisitScope(page){
+  var toggle = page.locator("[data-visit-scope-editor]");
+  if(await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+}
+
+async function openRoomScope(page,id){
+  var toggle = page.locator('[data-room-scope-editor="'+id+'"]');
+  if(await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+}
+
 function existingState(overrides){
   var state = {
     visit:{client:"Scope client",site:"Scope site",date:"2026-08-18"},
@@ -58,6 +68,7 @@ function existingState(overrides){
 test("new rooms start lean while visit scope starts fully included", async function(){
   await withApp(null,async function(page){
     await page.locator("#addroom").click();
+    await openVisitScope(page);
     await page.locator('[data-sec="1|id"] [data-k="seats"]').fill("120");
     var initial = await page.evaluate(function(){
       var state = window.__avl.S();
@@ -113,6 +124,7 @@ test("visit scope gates room choices without erasing their local selection or an
     await page.locator('[data-sec="1|audio"] [data-k="noise"]').fill("47");
     var before = await surveyStateSnapshot(page);
 
+    await openVisitScope(page);
     await page.locator('[data-visit-scope="audio"]').click();
     var disabled = await page.evaluate(function(){
       return {
@@ -175,6 +187,7 @@ test("inactive photo buckets stay recoverable but leave reports and CRM scope", 
     assert.match(await recovery.innerText(),/Move or delete/);
 
     await page.locator('[data-app-view="survey"]').click();
+    await openRoomScope(page,1);
     await page.locator('[data-room-section="audio"]').click();
     assert.equal(await page.evaluate(function(expectedCover){
       var model = window.__avl.buildReportModel();
@@ -210,6 +223,8 @@ test("existing surveys stay included, duplication copies local scope, and discip
     });
 
     var fullProgress = await page.locator("#corechip").innerText();
+    await openVisitScope(page);
+    await openRoomScope(page,1);
     await page.locator("[data-visit-scope-clear]").click();
     assert.deepEqual(
       await page.locator('[data-room-scope-panel="1"] [data-room-section]').evaluateAll(function(buttons){
@@ -252,6 +267,7 @@ test("the legacy combined equipment skip repairs once without coupling the new s
     });
     assert.deepEqual(repaired,{equipment:false,control:false,lighting:false,marker:2});
 
+    await openRoomScope(page,1);
     await page.locator('[data-room-section="control"]').click();
     assert.deepEqual(await page.evaluate(function(){
       return {
@@ -260,5 +276,40 @@ test("the legacy combined equipment skip repairs once without coupling the new s
         lighting:window.__avl.roomSectionSelected(1,"lighting")
       };
     }),{equipment:false,control:true,lighting:false});
+  });
+});
+
+test("scope controls stay compact until the surveyor chooses to edit them", async function(){
+  await withApp(null,async function(page){
+    var before = await surveyStateSnapshot(page);
+    var compact = await page.locator("[data-visit-scope-panel]").evaluate(function(panel){
+      return {
+        height:panel.getBoundingClientRect().height,
+        editor:!!panel.querySelector(".scopeeditor"),
+        detail:panel.querySelector(".scope-summary-detail").textContent,
+        count:panel.querySelector(".scope-summary-count").textContent
+      };
+    });
+    assert.ok(compact.height < 80,"the closed visit scope must stay out of the survey's way");
+    assert.equal(compact.editor,false);
+    assert.equal(compact.detail,"All disciplines included");
+    assert.equal(compact.count,"8/8");
+
+    await openVisitScope(page);
+    var expanded = await page.locator("[data-visit-scope-panel]").evaluate(function(panel){
+      var buttons = panel.querySelectorAll("[data-visit-scope]");
+      return {
+        expanded:panel.querySelector("[data-visit-scope-editor]").getAttribute("aria-expanded"),
+        buttons:buttons.length,
+        firstTop:buttons[0].getBoundingClientRect().top,
+        secondTop:buttons[1].getBoundingClientRect().top,
+        thirdTop:buttons[2].getBoundingClientRect().top
+      };
+    });
+    assert.equal(expanded.expanded,"true");
+    assert.equal(expanded.buttons,8);
+    assert.equal(expanded.firstTop,expanded.secondTop,"scope choices should form a dense two-column grid");
+    assert.ok(expanded.thirdTop > expanded.firstTop);
+    assert.equal(await surveyStateSnapshot(page),before,"opening the scope editor must remain view-only");
   });
 });
