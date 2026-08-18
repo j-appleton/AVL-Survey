@@ -145,3 +145,44 @@ test("the active room pill follows a room rename immediately", async function(){
     );
   });
 });
+
+test("the blue room pill opens a compact jump list without changing survey data", async function(){
+  await withApp(async function(page){
+    await scrollToAndExpect(page,'[data-room="2"]',2,"Conference Hall");
+    var before = await surveyStateSnapshot(page);
+
+    await page.locator("[data-room-context-pill]").click();
+    var menu = page.locator("[data-room-jump-menu]");
+    await menu.waitFor({state:"visible"});
+    assert.deepEqual(
+      await menu.locator("[data-room-jump]").allTextContents(),
+      ["Site / Visit","Sanctuary","Conference Hall","Network Room"],
+      "the jump list must follow survey room order"
+    );
+    assert.equal(
+      await menu.locator('[data-room-jump="2"]').getAttribute("aria-current"),
+      "location",
+      "the active room must be called out in the jump list"
+    );
+    var layout = await menu.evaluate(function(element){
+      var rect = element.getBoundingClientRect();
+      return {
+        position:getComputedStyle(element).position,
+        width:rect.width,
+        inside:rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight
+      };
+    });
+    assert.equal(layout.position,"fixed");
+    assert.ok(layout.width <= 250,"the room navigator must remain a compact list");
+    assert.equal(layout.inside,true,"the room navigator must stay inside the viewport");
+
+    await menu.locator('[data-room-jump="3"]').click();
+    await until(async function(){
+      return page.locator("[data-room-context-pill]").getAttribute("data-active-room").then(function(value){
+        return value === "3";
+      });
+    });
+    assert.equal(await menu.isHidden(),true,"choosing a room must close the jump list");
+    assert.equal(await surveyStateSnapshot(page),before,"room navigation must remain ephemeral UI state");
+  });
+});

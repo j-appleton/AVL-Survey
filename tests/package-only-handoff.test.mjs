@@ -263,7 +263,7 @@ test("CRM note walks canonical fields, preserves blanks and ships once at the ar
   });
 });
 
-test("commercial context stays internal to the app, package data and CRM note", async function(){
+test("commercial context reaches engineering HTML but stays out of the client PDF", async function(){
   await withApp(crmState(),async function(page){
     var result = await page.evaluate(async function(){
       var budget = document.querySelector('[data-scope="visit"][data-k="budget"]');
@@ -272,6 +272,12 @@ test("commercial context stays internal to the app, package data and CRM note", 
       var model = window.__avl.buildReportModel();
       var html = window.__avl.buildHtmlReport(model);
       var pdf = await window.__avl.generatePdfReport();
+      var crm = window.__avl.crmNoteText();
+      var packaged = window.__avl.packageEnvelope([]).data.visit;
+      delete window.__avl.S().visit.integrators;
+      delete window.__avl.S().visit.competition;
+      delete window.__avl.S().visit.budget;
+      var cleanPdf = await window.__avl.generatePdfReport();
       return {
         budgetField:budget ? budget.closest(".f").innerText : "",
         budgetValue:budget ? budget.value : "",
@@ -279,11 +285,14 @@ test("commercial context stays internal to the app, package data and CRM note", 
         involvementValue:involvement ? involvement.value : "",
         competitionField:competition ? competition.closest(".f").innerText : "",
         competitionValue:competition ? competition.value : "",
-        crm:window.__avl.crmNoteText(),
-        packaged:window.__avl.packageEnvelope([]).data.visit,
+        crm:crm,
+        packaged:packaged,
         model:JSON.stringify(model),
         html:html,
-        pdf:new TextDecoder("latin1").decode(pdf.bytes)
+        pdf:new TextDecoder("latin1").decode(pdf.bytes),
+        pdfUnchanged:pdf.bytes.length === cleanPdf.bytes.length && pdf.bytes.every(function(byte,index){
+          return byte === cleanPdf.bytes[index];
+        })
       };
     });
     assert.match(result.budgetField,/Budget \/ approved range/);
@@ -301,9 +310,16 @@ test("commercial context stays internal to the app, package data and CRM note", 
     assert.equal(result.packaged.integrators,"Multiple integrators");
     assert.equal(result.packaged.competition,"Northstar AV and the client's incumbent IT provider");
     assert.equal(result.packaged.budget,"$35,000 - $50,000");
-    [result.model,result.html,result.pdf].forEach(function(output){
-      assert.doesNotMatch(output,/35,000|50,000|Budget \/ approved range|Multiple integrators|Northstar AV|Other integrators \/ competition/);
+    [result.model,result.html].forEach(function(output){
+      assert.match(output,/35,000|50,000/);
+      assert.match(output,/Budget \/ approved range/);
+      assert.match(output,/Multiple integrators/);
+      assert.match(output,/Northstar AV/);
+      assert.match(output,/Other integrators \/ competition/);
     });
+    assert.match(result.html,/Internal engineering context/);
+    assert.doesNotMatch(result.pdf,/35,000|50,000|Budget \/ approved range|Multiple integrators|Northstar AV|Other integrators \/ competition/);
+    assert.equal(result.pdfUnchanged,true,"commercial context must not change one byte of the client PDF");
   });
 });
 
