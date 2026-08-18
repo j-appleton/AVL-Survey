@@ -64,7 +64,12 @@ it works with no signal — the service worker caches everything on first load.
 
 ## 3. Using it
 
-- **Nothing is required.** Every section past "Room" has a *skip* button.
+- **Visit scope** starts with every AV discipline included. Turn off what the
+  visit is not about, or use **All / Clear** for a fast reset.
+- A newly added room starts with only **Room** details. Add the dimensions,
+  audio, video, lighting, control, infrastructure, existing-equipment, or notes
+  sections that space actually needs. Existing surveys keep their prior scope,
+  and duplicating a room copies its section choices.
 - The **core** counter in the header tracks the small subset worth chasing before
   you leave site. Everything else is optional.
 - **+ Room** adds a space; **Duplicate** clones one for near-identical rooms.
@@ -81,9 +86,11 @@ it works with no signal — the service worker caches everything on first load.
 - Importing over work and clearing a survey create a recoverable snapshot.
   **Restore backup** appears whenever one is available.
 - Photos, capture controls, and recovery notices live in the dedicated
-  **Photos** tab. Every room section stays visible there as a direct capture
-  checklist, including empty sections; there is no destination picker to hide
-  the required shot list. **Photo** opens the camera while **Existing** adds one
+  **Photos** tab. Its checklist exactly follows the selected visit and room
+  scope, so removing a section in Survey removes its live capture target too.
+  A removed section that already holds photographs remains as a clearly marked
+  recovery group where those photos can be moved or deleted, but no new photos
+  can be added to it. **Photo** opens the camera while **Existing** adds one
   or more images from the phone's photo library or a computer's files; both use
   the same compression, storage, ordering, and package pipeline. Tap any
   thumbnail to inspect the full stored survey
@@ -217,6 +224,9 @@ The browser suites start the app on localhost and verify:
 - storage retention reports whether the browser actually granted persistence,
   without changing the localStorage meter or treating the result as a backup
 - the ambient-light and DISCAS calculations retain their domain thresholds
+- global visit scope and per-room scope form one effective checklist across
+  Survey, Photos, progress, CRM notes, and both reports without deleting hidden
+  answers or original archive photographs
 - the installed app reloads offline with survey data intact
 - a new service worker waits for **Update**, **Later** preserves the open session,
   and old caches are removed only after explicit activation

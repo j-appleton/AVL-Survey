@@ -299,6 +299,21 @@ button.btn:active{transform:translateY(1px)}
 .roomhd{display:flex;align-items:center;gap:8px;padding:12px 14px;background:var(--accent-soft);border-bottom:1px solid var(--line)}
 .roomhd .nm{flex:1;font-weight:700;font-size:16px}
 .roomhd .pct{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.scopepanel{padding:14px;background:var(--card);border-bottom:1px solid var(--line)}
+.scopepanel.visit-scope{margin:12px 0;border:1px solid var(--line);border-radius:var(--radius)}
+.scopehead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
+.scopehead b{display:block;font-size:14px}.scopehead .hint{margin:2px 0 0}
+.scopebulk{display:flex;gap:5px;flex:none}.scopebulk button{padding:5px 8px}
+.scopechips{display:flex;flex-wrap:wrap;gap:7px}
+.scopechips button{
+  min-height:38px;padding:8px 11px;border:1px solid var(--line);border-radius:999px;
+  background:var(--bg);color:var(--muted);font:inherit;font-size:12px;font-weight:650;cursor:pointer
+}
+.scopechips button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.room-scope-hidden{margin-top:8px;color:var(--muted);font-size:11px}
+.photo-group.out-of-scope{background:var(--na-bg)}
+.photo-group.out-of-scope .photo-group-title{color:var(--muted)}
+.photo-group-note{display:block;font-size:11px;font-weight:400;margin-top:2px}
 .roomtools{display:flex;gap:6px;padding:10px 14px;border-top:1px solid var(--line);background:var(--bg)}
 .pkg{border-top:1px solid var(--line);padding:12px 0;margin-top:12px}
 .pkgtools{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
@@ -430,7 +445,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.22.6";
+var APP_VERSION = "1.23.0";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -520,9 +535,9 @@ var ROOM_SECTIONS = [
     {k:"obst", l:"Obstructions", t:"area", h:"Columns, beams, soffits, sprinklers, diffusers."}
   ]},
 
-  { id:"light", title:"Ambient light", special:"light", fields:[] },
+  { id:"light", title:"Ambient light", scope:"video", special:"light", fields:[] },
 
-  { id:"disp", title:"Display & sightlines", fields:[
+  { id:"disp", title:"Display & sightlines", scope:"video", fields:[
     {k:"near", l:"Closest seat (ft)", t:"num", inline:1},
     {k:"far",  l:"Furthest seat (ft)", t:"num", c:1, inline:1},
     {k:"viewtype", l:"Viewing task", t:"sel", o:["General viewing","Analytical / detailed content"], h:"Analytical = spreadsheets, CAD, small text. Drives a bigger screen."},
@@ -532,7 +547,7 @@ var ROOM_SECTIONS = [
     {k:"exdisp", l:"Existing display — reuse or remove", t:"text"}
   ]},
 
-  { id:"audio", title:"Audio", fields:[
+  { id:"audio", title:"Audio", scope:"audio", fields:[
     {k:"noise", l:"Ambient noise (dBA)", t:"num", h:"Phone SPL app is fine. Under 45 good, over 55 is a problem."},
     {k:"hvac",  l:"HVAC noise acceptable", t:"tri"},
     {k:"reverb",l:"Reverb / hard surfaces acceptable", t:"tri"},
@@ -540,14 +555,25 @@ var ROOM_SECTIONS = [
     {k:"spk",   l:"Speaker placement constraints", t:"area"}
   ]},
 
-  { id:"power", title:"Power", fields:[
+  { id:"lighting", title:"Lighting", scope:"lighting", fields:[
+    {k:"lightctl", l:"Lighting control integration", t:"sel", o:["","Not required","DALI","DMX","0-10V","Lutron","Crestron","Other / unknown"]},
+    {k:"archlight", l:"Architectural lighting replacement", t:"check", checkLabel:"Include replacement in this room"},
+    {k:"lightcount", l:"Architectural light count", t:"num", h:"Count the fixtures included in the replacement scope."}
+  ]},
+
+  { id:"control", title:"Control", scope:"control", fields:[
+    {k:"ctrl",  l:"Control interface preference", t:"chips", o:["Touch panel","Button panel","Auto-sensing","App / BYOD","Existing system"]},
+    {k:"oper",  l:"Who operates the room", t:"sel", o:["","Trained AV staff","General staff","Public / unattended"]}
+  ]},
+
+  { id:"power", title:"Power", scope:"power", fields:[
     {k:"outlets", l:"Existing outlets adequate", t:"tri", c:1},
     {k:"panel",   l:"Panel location / spare breakers", t:"text"},
     {k:"dedic",   l:"Dedicated circuit required", t:"tri"},
     {k:"powby",   l:"Power provided by", t:"sel", o:["","EC / by others","Us","TBD"]}
   ]},
 
-  { id:"net", title:"Network & IT", fields:[
+  { id:"net", title:"Network & IT", scope:"network", fields:[
     {k:"drops",  l:"Data drops present", t:"tri", c:1},
     {k:"dropn",  l:"Drop count", t:"num", inline:1},
     {k:"cat",    l:"Cable category", t:"sel", o:["","Cat5e","Cat6","Cat6a","Unknown"], inline:1},
@@ -557,7 +583,7 @@ var ROOM_SECTIONS = [
     {k:"uc",     l:"UC platform", t:"sel", o:["","Microsoft Teams","Zoom","Webex","Google Meet","Multiple / BYOD","None"], c:1}
   ]},
 
-  { id:"path", title:"Pathways & rack", fields:[
+  { id:"path", title:"Pathways & rack", scope:"pathways", fields:[
     {k:"conduit", l:"Conduit / pathway present", t:"tri", c:1},
     {k:"pathtype",l:"Pathway type", t:"chips", o:["Conduit","Cable tray","J-hooks","Open plenum","Floor box","Surface raceway"]},
     {k:"runft",   l:"Longest cable run, rack → display (ft)", t:"num", c:1, h:"Measured, not eyeballed. Drives the extender spec."},
@@ -567,15 +593,10 @@ var ROOM_SECTIONS = [
     {k:"rackvent",l:"Rack ventilation adequate", t:"tri", inline:1}
   ]},
 
-  { id:"exist", title:"Existing equipment & control", fields:[
+  { id:"exist", title:"Existing equipment", scope:"existing", fields:[
     {k:"inv",   l:"Existing gear inventory", t:"area", h:"Make / model / condition. Photograph the labels."},
     {k:"reuse", l:"Anything being reused", t:"tri"},
-    {k:"remov", l:"Removal & disposal by", t:"text"},
-    {k:"ctrl",  l:"Control interface preference", t:"chips", o:["Touch panel","Button panel","Auto-sensing","App / BYOD","Existing system"]},
-    {k:"lightctl", l:"Lighting control integration", t:"sel", o:["","Not required","DALI","DMX","0-10V","Lutron","Crestron","Other / unknown"]},
-    {k:"archlight", l:"Architectural lighting replacement", t:"check", checkLabel:"Include replacement in this room"},
-    {k:"lightcount", l:"Architectural light count", t:"num", h:"Count the fixtures included in the replacement scope."},
-    {k:"oper",  l:"Who operates the room", t:"sel", o:["","Trained AV staff","General staff","Public / unattended"]}
+    {k:"remov", l:"Removal & disposal by", t:"text"}
   ]},
 
   { id:"notes", title:"Notes & red flags", fields:[
@@ -584,6 +605,41 @@ var ROOM_SECTIONS = [
     {k:"gen",   l:"General notes", t:"area"}
   ]}
 ];
+
+/* Visit scope is opt-out; room scope is opt-in for newly created rooms. Existing
+   surveys keep their current inverse `skipped` map, so this UI change does not
+   rewrite or discard any stored field data. */
+var VISIT_SCOPES = [
+  {id:"audio",title:"Audio"},
+  {id:"video",title:"Video / displays"},
+  {id:"lighting",title:"Lighting"},
+  {id:"control",title:"Control"},
+  {id:"power",title:"Power"},
+  {id:"network",title:"Network & IT"},
+  {id:"pathways",title:"Pathways & rack"},
+  {id:"existing",title:"Existing equipment"}
+];
+
+function visitScopeEnabled(scopeId){
+  return !S.skipped["global|" + scopeId];
+}
+function roomSectionLocalSelected(roomId,sectionId){
+  return sectionId === "id" || !S.skipped[String(roomId) + "|" + sectionId];
+}
+function roomSectionDefinition(sectionId){
+  return ROOM_SECTIONS.filter(function(candidate){ return candidate.id === sectionId; })[0] || null;
+}
+function roomSectionSelected(roomId,sectionId){
+  var section = roomSectionDefinition(sectionId);
+  if(!section || section.id === "id") return true;
+  return (!section.scope || visitScopeEnabled(section.scope)) &&
+    roomSectionLocalSelected(roomId,section.id);
+}
+function initialiseRoomScope(roomId){
+  ROOM_SECTIONS.forEach(function(section){
+    if(section.id !== "id") S.skipped[String(roomId) + "|" + section.id] = true;
+  });
+}
 
 /* Photo package names are a durable handoff contract. Keep these labels
    independent of the editable UI section titles so a wording change cannot
@@ -595,6 +651,8 @@ var PHOTO_SECTION_META = {
   light: {slug:"ambient-light",      label:"Ambient light"},
   disp:  {slug:"display",            label:"Display"},
   audio: {slug:"audio",              label:"Audio"},
+  lighting:{slug:"lighting",         label:"Lighting"},
+  control:{slug:"control",           label:"Control"},
   power: {slug:"power",              label:"Power"},
   net:   {slug:"network",            label:"Network"},
   path:  {slug:"pathways",           label:"Pathways"},
@@ -663,7 +721,7 @@ function nowISO(){ try { return new Date().toISOString(); } catch(e){ return "";
 function blankState(){
   return {
     visit:{}, log:{}, rooms:[], photos:{}, captions:{}, compose:{summary:"",excluded:{}}, skipped:{}, ui:{},
-    meta:{created:nowISO(), updated:nowISO(), app:APP_VERSION}
+    meta:{created:nowISO(), updated:nowISO(), app:APP_VERSION, roomScopeVersion:2}
   };
 }
 var S = blankState();
@@ -776,6 +834,19 @@ function validate(d){
 }
 
 /* Fill optional objects so a partial-but-valid payload cannot crash rendering. */
+function repairRoomScopeSelections(state){
+  state.meta = state.meta && typeof state.meta === "object" ? state.meta : {};
+  if(state.meta.roomScopeVersion === 2) return;
+  state.rooms.forEach(function(room){
+    var legacyKey = String(room.id) + "|exist";
+    if(!state.skipped[legacyKey]) return;
+    ["lighting","control"].forEach(function(sectionId){
+      var key = String(room.id) + "|" + sectionId;
+      if(!Object.prototype.hasOwnProperty.call(state.skipped,key)) state.skipped[key] = true;
+    });
+  });
+  state.meta.roomScopeVersion = 2;
+}
 function coerce(d){
   var b = blankState();
   var state = {
@@ -789,6 +860,7 @@ function coerce(d){
     ui:d.ui || b.ui,
     meta:d.meta || b.meta
   };
+  repairRoomScopeSelections(state);
   var ids = window.PrePlotCompose.descriptorIds(state.photos);
   state.captions = window.PrePlotCaptions.repair(state.captions,ids);
   window.PrePlotCompose.repair(state);
@@ -2160,7 +2232,7 @@ function crmOtherPhotoCaptionSections(lines,manifest,filter){
 }
 function crmNoteText(){
   var lines = [];
-  var manifest = photoManifest();
+  var manifest = photoManifest().filter(photoEntryInSelectedScope);
   var summary = composeSummary();
   if(summary){
     var summaryParts = summary.replace(/\r\n?/g,"\n").split("\n");
@@ -2170,8 +2242,15 @@ function crmNoteText(){
     lines.push("");
   }
   crmNoteSection(lines,"Client / visit",S.visit,VISIT,false);
-  crmNoteSection(lines,"Site logistics & access",S.log,LOGISTICS,!!S.skipped["log|main"]);
-  crmPhotoCaptionLines(lines,"log|main",manifest);
+  lines.push("VISIT SCOPE");
+  lines.push(VISIT_SCOPES.filter(function(scope){
+    return visitScopeEnabled(scope.id);
+  }).map(function(scope){ return scope.title; }).join(", ") || "None selected");
+  lines.push("");
+  if(!S.skipped["log|main"]){
+    crmNoteSection(lines,"Site logistics & access",S.log,LOGISTICS,false);
+    crmPhotoCaptionLines(lines,"log|main",manifest);
+  }
   crmOtherPhotoCaptionSections(lines,manifest,function(entry){
     return !entry.roomId && entry.key !== "log|main";
   });
@@ -2180,14 +2259,9 @@ function crmNoteText(){
     lines.push("ROOM " + ("0" + (index + 1)).slice(-2) + " — " + name);
     lines.push("");
     ROOM_SECTIONS.forEach(function(section){
+      if(!roomSectionSelected(room.id,section.id)) return;
       var fields = section.special === "light" ? LIGHT_FIELDS : section.fields;
-      crmNoteSection(
-        lines,
-        section.title,
-        room.d || {},
-        fields,
-        !!S.skipped[room.id + "|" + section.id]
-      );
+      crmNoteSection(lines,section.title,room.d || {},fields,false);
       var sectionKey = room.id + "|" + section.id;
       crmPhotoCaptionLines(lines,sectionKey,manifest);
     });
@@ -3146,14 +3220,22 @@ function photoMoveDestinations(currentKey){
     seen[key] = true;
     destinations.push({key:key,label:label});
   }
-  add("log|main",((S.visit && S.visit.site) || "Site") + " - Site logistics & access");
+  if(!S.skipped["log|main"]){
+    add("log|main",((S.visit && S.visit.site) || "Site") + " - Site logistics & access");
+  }
   S.rooms.forEach(function(room){
     var roomName = (room.d && room.d.name) || ("Room " + room.id);
     ROOM_SECTIONS.forEach(function(section){
+      if(!roomSectionSelected(room.id,section.id)) return;
       add(String(room.id)+"|"+section.id,roomName+" - "+section.title);
     });
   });
-  Object.keys(photoBuckets()).forEach(function(key){ add(key,key); });
+  Object.keys(photoBuckets()).forEach(function(key){
+    var bits = String(key).split("|");
+    var room = S.rooms.filter(function(candidate){ return String(candidate.id) === bits[0]; })[0];
+    if(room && ROOM_SECTIONS.some(function(section){ return section.id === bits[1]; })) return;
+    add(key,key);
+  });
   return destinations;
 }
 function photoMoveSelectHTML(key,index){
@@ -3171,8 +3253,9 @@ function populatePhotoMoveSelect(select){
   });
   select.setAttribute("data-photo-move-ready","1");
 }
-function photosHTML(key){
+function photosHTML(key,options){
   var list = photoList(key);
+  var allowAdd = !options || options.allowAdd !== false;
   return '<div class="f">' + photoCaptureRecoveryHTML(key) +
     '<div class="photos" data-photos="'+esc(key)+'">' +
     list.map(function(p,i){
@@ -3208,10 +3291,10 @@ function photosHTML(key){
         (canReorder ? photoMoveSelectHTML(key,i) : '') +
         '</div>';
     }).join("") +
-    '<div class="photo-add-actions">' +
+    (allowAdd ? '<div class="photo-add-actions">' +
       '<button type="button" class="addph" data-addph="'+esc(key)+'" aria-label="Take photo"><span>+</span><span>Photo</span></button>' +
       '<button type="button" class="addph" data-addexisting="'+esc(key)+'" aria-label="Add existing photos"><span>&#8679;</span><span>Existing</span></button>' +
-    '</div>' +
+    '</div>' : '') +
     '</div></div>';
 }
 
@@ -3330,10 +3413,10 @@ function refreshCalc(scope){
    ============================================================ */
 function allFieldsFor(scope){
   if(scope === "visit") return VISIT;
-  if(scope === "log")   return LOGISTICS;
+  if(scope === "log")   return S.skipped["log|main"] ? [] : LOGISTICS;
   var out = [];
   ROOM_SECTIONS.forEach(function(s){
-    if(S.skipped[scope + "|" + s.id]) return;
+    if(!roomSectionSelected(scope,s.id)) return;
     if(s.special === "light"){
       out.push({k:"lux_disp", c:1});
       out.push({k:"lt_shade"});
@@ -3386,6 +3469,15 @@ function coverManifestEntry(identity){
   }
   return null;
 }
+function photoEntryInSelectedScope(entry){
+  if(!entry) return false;
+  if(!entry.roomId){
+    return entry.key === "log|main" ? !S.skipped["log|main"] : true;
+  }
+  return roomSectionDefinition(entry.sectionId)
+    ? roomSectionSelected(entry.roomId,entry.sectionId)
+    : true;
+}
 function coverPreviewHTML(entry,interactive){
   var source = photoSource(entry.key,entry.bucketIndex);
   var ready = source && source.url;
@@ -3399,7 +3491,9 @@ function coverPreviewHTML(entry,interactive){
     '<div class="cover-file">'+esc(entry.filename)+'</div></div>';
 }
 function coverCardHTML(){
-  var chosen = coverManifestEntry(S.visit.coverPhotoId);
+  var storedCover = coverManifestEntry(S.visit.coverPhotoId);
+  var coverOutsideScope = storedCover && !photoEntryInSelectedScope(storedCover);
+  var chosen = coverOutsideScope ? null : storedCover;
   var candidate = coverManifestEntry(coverCandidate);
   var h = '<div class="card cover-card" data-cover-card><h2>Report cover</h2>';
   if(coverSelectMode){
@@ -3417,6 +3511,11 @@ function coverCardHTML(){
       '<div class="cover-actions">' +
       '<button type="button" class="btn" data-cover-choose>Change cover</button>' +
       '<button type="button" class="btn ghost" data-cover-remove>Remove cover</button></div>';
+  } else if(coverOutsideScope){
+    h += '<p class="cover-copy"><b>The selected cover is outside the current scope.</b><br>' +
+      'Add its room section back to restore it, or choose another cover.</p>' +
+      '<div class="cover-actions"><button type="button" class="btn pri" data-cover-choose>Choose another cover</button>' +
+      '<button type="button" class="btn ghost" data-cover-remove>Remove cover</button></div>';
   } else {
     h += '<p class="cover-copy"><b>No report cover selected.</b><br>The report will use a plain cover.</p>' +
       '<button type="button" class="btn pri" data-cover-choose'+(photoCount() ? '' : ' disabled')+'>Choose cover</button>';
@@ -3431,13 +3530,46 @@ function secHTML(scope, id, title, inner, skippable){
   return '<div class="sec' + (open ? " open" : "") + (skipped ? " skipped" : "") + '" data-sec="' + esc(key) + '">' +
     '<button class="sechd" type="button" data-toggle="' + esc(key) + '">' +
       '<span class="car">&#9656;</span><span class="t">' + esc(title) + '</span>' +
-      (skippable ? '<span class="skipbtn" data-skip="' + esc(key) + '">' + (skipped ? "include" : "skip") + '</span>' : "") +
+      (skippable ? '<span class="skipbtn" data-skip="' + esc(key) + '">' +
+        (scope === "log" ? (skipped ? "include" : "skip") : "remove") + '</span>' : "") +
     '</button>' +
     '<div class="secbody">' + inner + '</div></div>';
 }
 
+function visitScopeHTML(){
+  return '<section class="scopepanel visit-scope" data-visit-scope-panel>' +
+    '<div class="scopehead"><div><b>Visit scope</b>' +
+      '<span class="hint">Everything starts included. Turn off disciplines that are not part of this visit.</span></div>' +
+      '<div class="scopebulk"><button type="button" class="btn sm ghost" data-visit-scope-all>All</button>' +
+      '<button type="button" class="btn sm ghost" data-visit-scope-clear>Clear</button></div></div>' +
+    '<div class="scopechips">' + VISIT_SCOPES.map(function(scope){
+      var enabled = visitScopeEnabled(scope.id);
+      return '<button type="button" data-visit-scope="'+esc(scope.id)+'" aria-pressed="'+enabled+'">'+esc(scope.title)+'</button>';
+    }).join('') + '</div></section>';
+}
+
+function roomScopeHTML(room){
+  var hidden = 0;
+  var available = ROOM_SECTIONS.filter(function(section){
+    if(section.id === "id") return false;
+    if(section.scope && !visitScopeEnabled(section.scope)){ hidden++; return false; }
+    return true;
+  });
+  return '<div class="scopepanel" data-room-scope-panel="'+esc(room.id)+'">' +
+    '<div class="scopehead"><div><b>Sections for this room</b>' +
+      '<span class="hint">Add only what this space needs.</span></div></div>' +
+    '<div class="scopechips">' + available.map(function(section){
+      var selected = roomSectionLocalSelected(room.id,section.id);
+      return '<button type="button" data-room-section="'+esc(section.id)+'" data-room-id="'+esc(room.id)+'" aria-pressed="'+selected+'">'+esc(section.title)+'</button>';
+    }).join('') + '</div>' +
+    (hidden ? '<div class="room-scope-hidden">'+hidden+' section'+(hidden === 1 ? '' : 's')+' hidden by Visit scope.</div>' : '') +
+    '</div>';
+}
+
 function surveyViewHTML(){
   var h = "";
+
+  h += visitScopeHTML();
 
   /* visit + logistics */
   h += '<div class="card" data-room-context data-room-site>' +
@@ -3453,7 +3585,9 @@ function surveyViewHTML(){
     var nm = r.d.name || ("Room " + r.id);
     h += '<div class="card" data-room="' + r.id + '" data-room-context data-room-id="' + r.id + '">';
     h += '<div class="roomhd"><span class="nm">' + esc(nm) + '</span><span class="pct" data-pct="' + r.id + '"></span></div>';
+    h += roomScopeHTML(r);
     ROOM_SECTIONS.forEach(function(s){
+      if(s.id !== "id" && !roomSectionSelected(r.id,s.id)) return;
       var inner = s.special === "light"
         ? lightHTML(r.id)
         : fieldsHTML(r.id, s.fields);
@@ -3508,12 +3642,14 @@ function groupedPhotoManifest(){
   return {manifest:manifest,groups:groups};
 }
 
-function photoChecklistGroupHTML(key,title){
+function photoChecklistGroupHTML(key,title,options){
   var count = photoList(key).length;
-  return '<div class="photo-group" data-photo-group="'+esc(key)+'">' +
+  var inactive = options && options.inactive;
+  return '<div class="photo-group'+(inactive ? ' out-of-scope' : '')+'" data-photo-group="'+esc(key)+'">' +
     '<div class="photo-group-title"><span>'+esc(title)+'</span>' +
+    (inactive ? '<span class="photo-group-note">Not selected for this room. Move or delete these photographs.</span>' : '') +
     '<span class="photo-group-count">'+count+' photo'+(count === 1 ? '' : 's')+'</span></div>' +
-    photosHTML(key) +
+    photosHTML(key,{allowAdd:!inactive}) +
     '</div>';
 }
 
@@ -3521,14 +3657,23 @@ function photoRoomCardHTML(room, groups){
   var roomId = String(room.id);
   var declared = {};
   var inner = "";
+  var inactive = "";
   ROOM_SECTIONS.forEach(function(section){
     declared[section.id] = true;
-    inner += photoChecklistGroupHTML(roomId+"|"+section.id,section.title);
+    var key = roomId+"|"+section.id;
+    if(roomSectionSelected(roomId,section.id)){
+      inner += photoChecklistGroupHTML(key,section.title);
+    } else if(photoList(key).length){
+      inactive += photoChecklistGroupHTML(key,section.title,{inactive:true});
+    }
   });
   groups.forEach(function(group){
     if(declared[group.sectionId]) return;
     inner += photoChecklistGroupHTML(group.key,group.sectionLabel);
   });
+  if(inactive){
+    inner += '<div class="photo-group-title"><span>Outside selected room scope</span></div>' + inactive;
+  }
   return '<div class="card" data-photo-room="'+esc(roomId)+'" data-room-context data-room-id="'+esc(roomId)+'">' +
     '<div class="roomhd"><span class="nm">'+esc((room.d && room.d.name) || ("Room " + roomId))+'</span>' +
       '<span class="pct">'+groups.reduce(function(total,group){ return total + group.entries.length; },0)+' photos</span></div>' +
@@ -3547,7 +3692,11 @@ function photosViewHTML(){
   h += '<div class="card site-photo-card" data-room-context data-room-site>' +
     '<div class="roomhd"><span class="nm">'+esc((S.visit && S.visit.site) || "Site")+'</span>' +
     '<span class="pct">'+siteGroups.reduce(function(total,group){ return total + group.entries.length; },0)+' photos</span></div>';
-  h += photoChecklistGroupHTML("log|main","Site logistics & access");
+  if(!S.skipped["log|main"]){
+    h += photoChecklistGroupHTML("log|main","Site logistics & access");
+  } else if(photoList("log|main").length){
+    h += photoChecklistGroupHTML("log|main","Site logistics & access",{inactive:true});
+  }
   siteGroups.forEach(function(group){
     if(group.key === "log|main") return;
     h += photoChecklistGroupHTML(group.key,group.sectionLabel);
@@ -3610,6 +3759,7 @@ function composeViewHTML(){
   catch(error){
     return '<div class="card"><div class="empty">Compose could not load the photo list. Reload before continuing.</div></div>';
   }
+  var scopedManifest = manifest.filter(photoEntryInSelectedScope);
   var included = reportPhotoManifest(manifest).length;
   return '<span class="compose-room-marker" data-room-context data-room-site aria-hidden="true"></span>' +
     '<div class="composegrid" data-compose-view>' +
@@ -3625,8 +3775,8 @@ function composeViewHTML(){
     '</aside>' +
     '<section class="card composephotos"><div class="composephotos-head"><div><h2>Report photographs</h2>' +
       '<span class="hint">The archive keeps every original. Exclusion only changes the PDF and HTML report.</span></div>' +
-      '<span class="pct">'+included+' of '+manifest.length+' included</span></div>' +
-      (manifest.length ? '<div class="compose-photo-list">'+composePhotoListHTML(manifest)+'</div>' : '<div class="empty">No photos recorded yet.</div>') +
+      '<span class="pct">'+included+' of '+scopedManifest.length+' included</span></div>' +
+      (scopedManifest.length ? '<div class="compose-photo-list">'+composePhotoListHTML(scopedManifest)+'</div>' : '<div class="empty">No photographs in the selected visit scope.</div>') +
     '</section></div>';
 }
 
@@ -4062,6 +4212,35 @@ document.addEventListener("click", function(e){
     return;
   }
 
+  if(t.hasAttribute && t.hasAttribute("data-visit-scope")){
+    var visitScopeKey = "global|" + t.getAttribute("data-visit-scope");
+    if(S.skipped[visitScopeKey]) delete S.skipped[visitScopeKey];
+    else S.skipped[visitScopeKey] = true;
+    save(); render();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-visit-scope-all")){
+    VISIT_SCOPES.forEach(function(scope){ delete S.skipped["global|" + scope.id]; });
+    save(); render();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-visit-scope-clear")){
+    VISIT_SCOPES.forEach(function(scope){ S.skipped["global|" + scope.id] = true; });
+    save(); render();
+    return;
+  }
+  if(t.hasAttribute && t.hasAttribute("data-room-section")){
+    var roomScopeKey = t.getAttribute("data-room-id") + "|" + t.getAttribute("data-room-section");
+    if(S.skipped[roomScopeKey]){
+      delete S.skipped[roomScopeKey];
+      S.ui[roomScopeKey] = true;
+    } else {
+      S.skipped[roomScopeKey] = true;
+    }
+    save(); render();
+    return;
+  }
+
   if(t.hasAttribute && t.hasAttribute("data-compose-preview-close")){
     closeComposePreview();
     return;
@@ -4084,7 +4263,8 @@ document.addEventListener("click", function(e){
   if(sk){
     e.stopPropagation(); e.preventDefault();
     var key = sk.getAttribute("data-skip");
-    S.skipped[key] = !S.skipped[key];
+    if(S.skipped[key]) delete S.skipped[key];
+    else S.skipped[key] = true;
     save(); render();
     return;
   }
@@ -4147,6 +4327,11 @@ document.addEventListener("click", function(e){
     if(item && coverSelectMode){
       var choice = photoValue(item.getAttribute("data-photo-key"),item.getAttribute("data-photo-index"));
       if(choice){
+        var candidateEntry = coverManifestEntry(photoEntryIdentity(choice));
+        if(!photoEntryInSelectedScope(candidateEntry)){
+          toast("Add this section to the room before using its photo as the cover.");
+          return;
+        }
         coverCandidate = photoEntryIdentity(choice);
         render();
       }
@@ -4230,6 +4415,12 @@ document.addEventListener("click", function(e){
     var src = S.rooms.filter(function(r){ return String(r.id) === t.getAttribute("data-dup"); })[0];
     var copy = { id: seq++, d: JSON.parse(JSON.stringify(src.d)) };
     copy.d.name = (src.d.name || "Room") + " (copy)";
+    ROOM_SECTIONS.forEach(function(section){
+      if(section.id === "id") return;
+      if(S.skipped[String(src.id) + "|" + section.id]){
+        S.skipped[String(copy.id) + "|" + section.id] = true;
+      }
+    });
     S.rooms.push(copy); save(); render();
     window.scrollTo(0, document.body.scrollHeight);
     return;
@@ -4248,6 +4439,12 @@ document.addEventListener("click", function(e){
         });
         delete S.photos[pk];
       });
+      Object.keys(S.skipped).forEach(function(key){
+        if(key.indexOf(rid + "|") === 0) delete S.skipped[key];
+      });
+      Object.keys(S.ui).forEach(function(key){
+        if(key.indexOf(rid + "|") === 0) delete S.ui[key];
+      });
       save(); render();
     });
     return;
@@ -4256,6 +4453,7 @@ document.addEventListener("click", function(e){
   if(t.id === "addroom"){
     var r = { id: seq++, d:{} };
     S.rooms.push(r);
+    initialiseRoomScope(r.id);
     S.ui[r.id + "|id"] = true;
     save(); render();
     var card = document.querySelector('[data-room="' + r.id + '"]');
@@ -5743,12 +5941,15 @@ function reportBasis(data){
 }
 function reportDimensionTiles(room){
   var data = room.d || {};
-  var fields = [
-    {key:"len",label:"Length",suffix:" ft",qualifier:"overall"},
-    {key:"wid",label:"Width",suffix:" ft",qualifier:"overall"},
-    {key:"hgt",label:"Ceiling",suffix:" ft",qualifier:"to ceiling grid"},
-    {key:"seats",label:"Seats",suffix:"",qualifier:"occupancy"}
-  ];
+  var fields = [];
+  if(roomSectionSelected(room.id,"dims")){
+    fields = [
+      {key:"len",label:"Length",suffix:" ft",qualifier:"overall"},
+      {key:"wid",label:"Width",suffix:" ft",qualifier:"overall"},
+      {key:"hgt",label:"Ceiling",suffix:" ft",qualifier:"to ceiling grid"}
+    ];
+  }
+  fields.push({key:"seats",label:"Seats",suffix:"",qualifier:"occupancy"});
   return fields.filter(function(field){ return answered(data[field.key]); }).map(function(field){
     return {
       label:field.label,
@@ -5758,6 +5959,7 @@ function reportDimensionTiles(room){
   });
 }
 function reportLightTiles(room){
+  if(!roomSectionSelected(room.id,"light")) return [];
   var data = room.d || {};
   var tiles = [];
   LIGHT_FIELDS.filter(function(field){
@@ -5801,21 +6003,24 @@ function reportFieldRows(room){
   var omit = {
     name:true,seats:true,len:true,wid:true,hgt:true,
     lux_disp:true,lux_mid:true,lux_rear:true,lux_preset:true,
-    inv:true,reuse:true,remov:true,ctrl:true,lightctl:true,oper:true,
+    inv:true,reuse:true,remov:true,ctrl:true,oper:true,
     flags:true,open:true,gen:true
   };
   var rows = [];
   /* Fields handled as stats/cards belong in omit above. LIGHT_FIELDS owns its
      custom report labels so the PDF and CRM note cannot silently diverge. */
-  LIGHT_FIELDS.filter(function(field){
-    return !!field.reportLabel;
-  }).forEach(function(field){
-    if(answered(data[field.k])){
-      rows.push({label:field.reportLabel,value:disp(data[field.k])});
-    }
-  });
+  if(roomSectionSelected(room.id,"light")){
+    LIGHT_FIELDS.filter(function(field){
+      return !!field.reportLabel;
+    }).forEach(function(field){
+      if(answered(data[field.k])){
+        rows.push({label:field.reportLabel,value:disp(data[field.k])});
+      }
+    });
+  }
   ROOM_SECTIONS.forEach(function(section){
-    if(section.special || section.id === "exist" || section.id === "notes") return;
+    if(!roomSectionSelected(room.id,section.id)) return;
+    if(section.special || section.id === "exist" || section.id === "control" || section.id === "notes") return;
     section.fields.forEach(function(field){
       if(omit[field.k] || !answered(data[field.k])) return;
       var note = data[field.k + "_note"];
@@ -5835,18 +6040,15 @@ function reportEquipmentColumns(room){
     });
   }
   return {
-    equipment:collect([
+    equipment:roomSectionSelected(room.id,"exist") ? collect([
       {key:"inv",label:"Inventory"},
       {key:"reuse",label:"Reuse"},
       {key:"remov",label:"Removal"}
-    ]),
-    control:collect([
+    ]) : [],
+    control:roomSectionSelected(room.id,"control") ? collect([
       {key:"ctrl",label:"Interface"},
-      {key:"lightctl",label:"Lighting control"},
-      {key:"archlight",label:"Architectural lighting replacement"},
-      {key:"lightcount",label:"Architectural light count"},
       {key:"oper",label:"Operator"}
-    ])
+    ]) : []
   };
 }
 function reportOverviewItems(){
@@ -5855,18 +6057,23 @@ function reportOverviewItems(){
     if(answered(value)) items.push({title:title,body:disp(value)});
   }
   add("Scope as understood on arrival",S.visit.scope);
-  add("Site logistics",S.log.lognote);
-  LOGISTICS.forEach(function(field){
-    if(S.log[field.k] === "issue"){
-      add(field.l,S.log[field.k+"_note"] || "Marked as an issue during the visit.");
-    }
-  });
+  if(!S.skipped["log|main"]){
+    add("Site logistics",S.log.lognote);
+    LOGISTICS.forEach(function(field){
+      if(S.log[field.k] === "issue"){
+        add(field.l,S.log[field.k+"_note"] || "Marked as an issue during the visit.");
+      }
+    });
+  }
   S.rooms.forEach(function(room){
     var name = (room.d && room.d.name) || ("Room " + room.id);
-    add(name + " \u00b7 Red flags",room.d.flags);
-    add(name + " \u00b7 Open questions",room.d.open);
-    add(name + " \u00b7 Notes",room.d.gen);
+    if(roomSectionSelected(room.id,"notes")){
+      add(name + " \u00b7 Red flags",room.d.flags);
+      add(name + " \u00b7 Open questions",room.d.open);
+      add(name + " \u00b7 Notes",room.d.gen);
+    }
     ROOM_SECTIONS.forEach(function(section){
+      if(!roomSectionSelected(room.id,section.id)) return;
       section.fields.forEach(function(field){
         if(room.d[field.k] === "issue"){
           add(name + " \u00b7 " + field.l,
@@ -5889,7 +6096,8 @@ function reportCoverImageIndex(manifest){
 }
 function reportPhotoManifest(manifest){
   return (manifest || photoManifest()).filter(function(entry){
-    return !photoIsExcluded(photoValue(entry.key,entry.bucketIndex));
+    return photoEntryInSelectedScope(entry) &&
+      !photoIsExcluded(photoValue(entry.key,entry.bucketIndex));
   });
 }
 function buildReportModel(manifest){
@@ -5912,15 +6120,19 @@ function buildReportModel(manifest){
       };
     });
     var columns = reportEquipmentColumns(room);
+    var cards = [];
+    if(roomSectionSelected(room.id,"exist")){
+      cards.push({header:"Existing equipment",bullets:columns.equipment});
+    }
+    if(roomSectionSelected(room.id,"control")){
+      cards.push({header:"Control",bullets:columns.control});
+    }
     return {
       id:String(room.id),
       title:(room.d && room.d.name) || ("Room " + room.id),
       stats:dimensions.concat(light),
       rows:reportFieldRows(room),
-      cards:[
-        {header:"Existing equipment",bullets:columns.equipment},
-        {header:"Control",bullets:columns.control}
-      ]
+      cards:cards
     };
   });
   return {
@@ -5989,6 +6201,23 @@ function reportInfoBlockLayout(rows,w){
     rows:layoutRows,
     height:Math.max(104,35 + contentHeight + 12)
   };
+}
+function reportRoomCardsHeight(cards){
+  if(!cards.length) return 0;
+  if(cards.length === 1) return reportInfoBlockLayout(cards[0].bullets,532).height;
+  return Math.max(
+    reportInfoBlockLayout(cards[0].bullets,258).height,
+    reportInfoBlockLayout(cards[1].bullets,258).height
+  );
+}
+function reportDrawRoomCards(page,y,cards){
+  if(!cards.length) return;
+  if(cards.length === 1){
+    reportDrawInfoBlock(page,40,y,532,cards[0].header,cards[0].bullets);
+    return;
+  }
+  reportDrawInfoBlock(page,40,y,258,cards[0].header,cards[0].bullets);
+  reportDrawInfoBlock(page,314,y,258,cards[1].header,cards[1].bullets);
 }
 function reportSummaryLines(value,maxWidth){
   maxWidth = maxWidth || 532;
@@ -6095,28 +6324,23 @@ function buildReportDocument(report,images){
     y = reportDrawTileRow(page,lightTiles,y);
 
     var rows = room.rows;
-    var infoHeight = Math.max(
-      reportInfoBlockLayout(room.cards[0].bullets,258).height,
-      reportInfoBlockLayout(room.cards[1].bullets,258).height
-    );
-    var infoFitsFirst = infoHeight <= 735-y;
-    var tableHeight = infoFitsFirst ? 735-y-infoHeight-12 : 735-y;
+    var infoHeight = reportRoomCardsHeight(room.cards);
+    var infoFitsFirst = !room.cards.length || infoHeight <= 735-y;
+    var tableHeight = room.cards.length && infoFitsFirst ? 735-y-infoHeight-12 : 735-y;
     var tablePage = reportTakeTableColumns(rows,0,258,Math.max(0,tableHeight));
     if(tablePage.left.length) stripedTable(page,40,y,258,tablePage.left);
     if(tablePage.right.length) stripedTable(page,314,y,258,tablePage.right);
     if(tablePage.next) y += tablePage.height + 12;
-    if(infoFitsFirst){
-      reportDrawInfoBlock(page,40,y,258,room.cards[0].header,room.cards[0].bullets);
-      reportDrawInfoBlock(page,314,y,258,room.cards[1].header,room.cards[1].bullets);
+    if(room.cards.length && infoFitsFirst){
+      reportDrawRoomCards(page,y,room.cards);
     }
     pages.push(page);
 
-    if(!infoFitsFirst){
+    if(room.cards.length && !infoFitsFirst){
       page = pdfPage(portrait.width,portrait.height,"room");
       pageBand(page,"Room report","Field record - continued");
       pdfDrawText(page,roomName+" \u00b7 continued",40,76,24,true,PDF_COLORS.navy);
-      reportDrawInfoBlock(page,40,116,258,room.cards[0].header,room.cards[0].bullets);
-      reportDrawInfoBlock(page,314,116,258,room.cards[1].header,room.cards[1].bullets);
+      reportDrawRoomCards(page,116,room.cards);
       pages.push(page);
     }
 
@@ -6807,6 +7031,10 @@ window.__avl = {
   movePhotoWithinBucket:movePhotoWithinBucket,
   movePhotoBetweenBuckets:movePhotoBetweenBuckets,
   ROOM_SECTIONS:ROOM_SECTIONS,
+  VISIT_SCOPES:VISIT_SCOPES,
+  visitScopeEnabled:visitScopeEnabled,
+  roomSectionSelected:roomSectionSelected,
+  photoEntryInSelectedScope:photoEntryInSelectedScope,
   storagePersistStatus:function(){
     return {state:storagePersistState, requested:storagePersistRequested};
   },
