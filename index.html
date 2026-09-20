@@ -425,6 +425,12 @@ button.btn:active{transform:translateY(1px)}
 @media(max-width:900px){.composegrid{grid-template-columns:1fr}.composeside{position:static}.compose-photo-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:540px){.compose-photo-list{grid-template-columns:1fr}.compose-preview{padding:calc(8px + var(--preview-safe-top)) calc(8px + var(--preview-safe-right)) calc(8px + var(--preview-safe-bottom)) calc(8px + var(--preview-safe-left))}.compose-photo .ph{height:190px}}
 
+.usd-review{position:fixed;inset:0;z-index:245;padding:calc(12px + env(safe-area-inset-top,0px)) calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px));background:rgba(8,16,26,.9);display:flex;justify-content:center}
+.usd-panel{background:var(--card);border:1px solid var(--line);border-radius:14px;width:100%;max-width:660px;display:flex;flex-direction:column;min-height:0}
+.usd-head{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);flex:none}.usd-head h2{flex:1;margin:0;font-size:18px}.usd-head .btn{min-height:44px;flex:none}
+.usd-body{padding:0 16px 20px;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere}.usd-body canvas{display:block;width:100%;height:auto;border-radius:8px}.usd-body h3{margin-bottom:4px}.usd-body select{margin-top:6px}
+.usd-choice{display:flex;align-items:center;gap:10px;min-height:44px}.usd-choice input{width:20px;height:20px;flex:none}.usd-body [data-usd-add]{margin-top:12px;width:100%;min-height:44px}
+.usd-import-row{display:flex;justify-content:flex-end;margin:0 0 12px}
 </style>
 </head>
 <body>
@@ -459,11 +465,15 @@ button.btn:active{transform:translateY(1px)}
 <input type="file" id="filein" accept="image/*" capture="environment" multiple hidden>
 <input type="file" id="libraryin" accept="image/*" multiple hidden>
 <input type="file" id="jsonin" accept="application/zip,.zip,application/json,.json" hidden>
+<input type="file" id="usdin" accept=".usd,.usdc" hidden>
 
 <script src="./photo-store.js"></script>
 <script src="./photo-captions.js"></script>
 <script src="./compose.js"></script>
 <script src="./recovery.js"></script>
+<script src="./usd-import.js"></script>
+<script src="./usd-scene.js"></script>
+<script src="./usd-review.js"></script>
 <script>
 "use strict";
 
@@ -487,7 +497,7 @@ var STORAGE_OK = (function(){
 
 /* App + data versions. SCHEMA is the shape of the persisted survey and is the
    only thing migrations key off. Bump it and add a MIGRATIONS entry together. */
-var APP_VERSION = "1.24.0";
+var APP_VERSION = "1.25.0";
 var SCHEMA = 5;
 
 /* ============================================================
@@ -3688,6 +3698,7 @@ function surveyViewHTML(){
     '</div>';
 
   /* rooms */
+  h += '<div class="usd-import-row"><button type="button" class="btn sm ghost" data-usd-import>Import USD scan…</button></div>';
   if(!S.rooms.length){
     h += '<div class="card"><div class="empty">No rooms yet.<br>Tap <b>+ Room</b> to start the walkthrough.</div></div>';
   }
@@ -4656,6 +4667,7 @@ document.addEventListener("click", function(e){
     if(card) card.scrollIntoView({behavior:"smooth", block:"start"});
     return;
   }
+  if(t.hasAttribute("data-usd-import")){ document.getElementById("usdin").click(); return; }
   if(t.id === "pkgjump"){
     coverSelectMode = false;
     coverCandidate = "";
@@ -5618,6 +5630,30 @@ function restoreBackup(){
   render();
   return true;
 }
+
+document.getElementById("usdin").addEventListener("change",function(e){
+  var file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if(!file) return;
+  resetAllPhotoDeletes();
+  PrePlotUSDReview.open(file,{
+    lock:function(){ var lock=lockPhotoViewerScroll(); applyPhotoViewerScrollLock(lock); return lock; },
+    unlock:restorePhotoViewerScroll,
+    roomNames:function(){ return S.rooms.map(function(room){return room.d.name || "";}); },
+    addRooms:function(names){
+      var known=Object.create(null),added=0;
+      S.rooms.forEach(function(room){known[String(room.d.name || "").trim().toLowerCase()]=true;});
+      names.forEach(function(name){
+        if(known[name.toLowerCase()]) return;
+        known[name.toLowerCase()]=true;
+        var room={id:seq++,d:{name:name}};
+        S.rooms.push(room); initialiseRoomScope(room.id);
+        S.ui[room.id+"|id"]=true; added++;
+      });
+      if(added){save();render();toast(added+" room"+(added===1?"":"s")+" added from scan.");}
+    }
+  });
+});
 
 document.getElementById("jsonin").addEventListener("change", function(e){
   var f = e.target.files[0]; if(!f) return;

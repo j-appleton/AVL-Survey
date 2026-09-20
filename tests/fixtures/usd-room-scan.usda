@@ -1,0 +1,60 @@
+#usda 1.0
+(
+    defaultPrim = "SyntheticScan"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "SyntheticScan"
+{
+    matrix4d xformOp:transform = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(10,0,20,1))
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+
+    def Xform "Mesh_grp"
+    {
+        def Xform "Arch_grp"
+        {
+            def Mesh "Wall0"
+            {
+                point3f[] points = [(0,0,0),(4,0,0),(4,3,0),(0,3,0)]
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0,1,2,3]
+                float3[] extent = [(0,0,0),(4,3,0)]
+                uniform token subdivisionScheme = "none"
+            }
+            def Mesh "Wall1"
+            {
+                point3f[] points = [(0,0,0),(0,0,5),(0,3,5),(0,3,0)]
+                int[] faceVertexCounts = [3,3]
+                int[] faceVertexIndices = [0,1,2,0,2,3]
+                float3[] extent = [(0,0,0),(0,3,5)]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+        def Xform "Floor_grp"
+        {
+            def Mesh "Floor0"
+            {
+                point3f[] points = [(0,0,0),(4,0,0),(4,0,5),(0,0,5)]
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0,1,2,3]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+    }
+    def Xform "Section_grp"
+    {
+        def Xform "conferenceRoom0" (
+            displayName = "Conference room"
+        )
+        {
+            matrix4d xformOp:transform = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(2,0,2.5,1))
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+            def Xform "conferenceRoom0_centerTop"
+            {
+                matrix4d xformOp:transform = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,3,0,1))
+                uniform token[] xformOpOrder = ["xformOp:transform"]
+            }
+        }
+    }
+}
