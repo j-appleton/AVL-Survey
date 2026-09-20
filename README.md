@@ -24,12 +24,15 @@ GitHub Pages is free and takes about five minutes.
    - Set it to **Public** (Pages requires this on free accounts)
    - Tick **Add a README file**, then **Create repository**
 2. In the new repo click **Add file** → **Upload files**.
-3. Upload **all eleven files** from this bundle:
+3. Upload **all fourteen files** from this bundle:
    - `index.html`
    - `photo-store.js`
    - `photo-captions.js`
    - `compose.js`
    - `recovery.js`
+   - `usd-import.js`
+   - `usd-scene.js`
+   - `usd-review.js`
    - `sw.js`
    - `manifest.webmanifest`
    - `icon-192.png`
@@ -73,6 +76,18 @@ it works with no signal — the service worker caches everything on first load.
 - The **core** counter in the header tracks the small subset worth chasing before
   you leave site. Everything else is optional.
 - **+ Room** adds a space; **Duplicate** clones one for near-identical rooms.
+- **Import USD scan…**, above the rooms in Survey, reads a static binary USD
+  room scan locally. Review a top-down plan, object counts and whole-scan bounds,
+  then add the named spaces you select. Existing answers and photos are untouched.
+  When the file omits units, choose the scale explicitly before viewing measurements.
+  Scan-axis bounds are not per-room dimensions or ceiling heights; those survey
+  fields are never filled automatically. Room markers do not define room boundaries.
+  Only selected names are saved; the model is not included in the visit package.
+  This first reader supports USDC 0.8.0 static polygon meshes with matrix,
+  translation and scale transforms, including the supplied Model IO scan format.
+  Text USDA, USDZ, animation, external layers, instancing and other geometry types
+  are rejected rather than partially imported. Limit: 32 MB with additional decoded
+  data limits. No network service or runtime dependency is involved.
 - **Budget / approved range** is internal commercial context. It stays in the
   saved package and CRM note, but never appears in the PDF or engineering report.
 - **Integrator involvement** and **Other integrators / competition** capture
